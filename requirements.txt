@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+sentence-transformers
+opensearch-py
+psycopg2-binary
+httpx
+python-dotenv
+pydantic
+pydantic-settings
+apscheduler
