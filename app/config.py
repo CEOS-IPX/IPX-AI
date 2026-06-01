@@ -30,12 +30,15 @@ class Settings(BaseSettings):
     gemini_api_key: str
     gemini_model: str = "gemini-2.5-flash-lite"
 
-    # claude_api_key: str = ""
-    # claude_model: str = "claude-sonnet-4-20250514"
-    #
+    claude_api_key: str = ""
+    claude_model: str = "claude-haiku-4-5-20251001"  # 성능 안나오면 "claude-sonnet-4-6"
+
     # # ===== KIPRIS API =====
     # kipris_api_key: str = ""
     # kipris_base_url: str = ""
+
+    # ===== 동의어 사전 =====
+    synonyms_file_path: str = "app/resources/synonyms_patent.txt"
 
 
 settings = Settings()
