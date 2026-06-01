@@ -80,7 +80,7 @@ async def search(request: SearchRequest) -> SearchResponse:
     logger.info(f"[검색 요청] query='{request.query}', filters={request.legal_status}")
 
     try:
-        intent = await interpret_intent(request.query)
+        intent = await interpret_intent(request.query, domain=request.domain)
     except ValueError as e:
         logger.warning(f"의도 해석 실패: {e}")
         raise HTTPException(status_code=502, detail="검색 의도 해석에 실패했습니다.")

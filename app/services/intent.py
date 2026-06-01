@@ -45,6 +45,14 @@ SYSTEM_INSTRUCTION = """\
 당신은 특허 검색을 도와주는 의도 해석 전문가입니다.
 사용자의 자연어 입력을 분석해서 특허 검색 파이프라인이 사용할 구조화된 JSON을 생성하세요.
 
+## 입력 형식
+사용자 메시지에 다음 정보가 포함될 수 있습니다:
+- "검색 도메인": 사용자가 미리 선택한 기술 분야 (예: 이차전지, 반도체, AI)
+- "사용자 입력": 자연어 검색어
+
+도메인이 제공되면 키워드와 IPC 코드 추정 시 해당 도메인에 집중하세요.
+도메인이 없으면 사용자 입력만으로 판단하세요.
+
 ## 출력 규칙
 
 다음 JSON 형식만 출력하세요. 다른 설명, 마크다운 코드 블록은 절대 포함하지 마세요.
@@ -114,10 +122,23 @@ SYSTEM_INSTRUCTION = """\
 GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent"
 
 
-async def interpret_intent(user_query: str) -> IntentResult:
+async def interpret_intent(user_query: str, domain: Optional[str] = None) -> IntentResult:
     """
     사용자 자연어 입력을 의도 해석 결과로 변환
+
+    Args:
+        user_query: 사용자 자연어 입력
+
+    Returns:
+        IntentResult: 의도 해석 결과
+
+    Raises:
+        ValueError: LLM 응답을 파싱할 수 없을 때
+        httpx.HTTPError: API 호출 실패 시
     """
+
+    user_text = f"검색 도메인: {domain}\n사용자 입력: {user_query}" if domain else user_query
+
     payload = {
         "system_instruction": {
             "parts": [{"text": SYSTEM_INSTRUCTION}]
@@ -125,7 +146,7 @@ async def interpret_intent(user_query: str) -> IntentResult:
         "contents": [
             {
                 "role": "user",
-                "parts": [{"text": user_query}]
+                "parts": [{"text": user_text}]
             }
         ],
         "generationConfig": {
