@@ -14,6 +14,7 @@ from fastapi import FastAPI
 
 from app.routers import search
 from app.services.embedding import embedding_service
+from app.services.opensearch_client import opensearch_service
 
 logging.basicConfig(
     level=logging.INFO,
@@ -33,6 +34,8 @@ async def lifespan(app: FastAPI):
     yield
 
     # === Shutdown ===
+    logger.info("[Shutdown] 리소스 정리 시작")
+    await opensearch_service.close()
     logger.info("[Shutdown] 서버 종료")
 
 
