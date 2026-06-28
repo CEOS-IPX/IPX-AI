@@ -1,0 +1,76 @@
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+wheels/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# ===== 가상환경 =====
+.venv/
+venv/
+env/
+ENV/
+
+# ===== 테스트 / 캐시 =====
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+.cache
+.mypy_cache/
+.ruff_cache/
+
+# ===== 환경 변수 (보안 중요) =====
+.env
+.env.*
+!.env.example
+
+# ===== IDE =====
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# ===== Git =====
+.git/
+.gitignore
+.gitattributes
+
+# ===== 모델 캐시 (런타임에 볼륨으로 처리) =====
+.cache/
+huggingface/
+models/
+*.pt
+*.safetensors
+*.bin
+
+# ===== 문서 / 로그 =====
+README.md
+docs/
+*.log
+logs/
+
+# ===== Docker =====
+Dockerfile
+.dockerignore
+docker-compose*.yml
+
+# ===== Jupyter / 노트북 =====
+.ipynb_checkpoints/
+*.ipynb
+
+# ===== 데이터 파일 (BULK 등) =====
+data/
+*.csv
+*.json.gz
+*.xml
+*.zip
