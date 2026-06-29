@@ -8,3 +8,4 @@ python-dotenv
 pydantic
 pydantic-settings
 apscheduler
+pandas

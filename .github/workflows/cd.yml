@@ -1,0 +1,131 @@
+# ============================================================
+# IPX-AI CD — Docker 빌드 & EC2 배포
+# 흐름:   Docker 이미지 빌드 → GHCR 푸시 → EC2 배포 → 헬스체크
+# 주의: BGE-M3 모델 로드로 헬스체크 시간 길게 잡음 (최대 5분)
+# ============================================================
+
+name: CD — IPX-AI 빌드 & 배포
+
+on:
+  push:
+    branches: [ main ]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.github/workflows/ci.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: cd-ipx-ai-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ghcr.io/ceos-ipx/patent-python
+  CONTAINER_NAME: patent-python
+
+jobs:
+  # =====================================================
+  # 1단계: Docker 이미지 빌드 + GHCR 푸시
+  # =====================================================
+  build-and-push:
+    name: 빌드 & GHCR 푸시
+    runs-on: ubuntu-latest
+
+    outputs:
+      image-tag: ${{ steps.meta.outputs.sha }}
+
+    steps:
+      - name: 소스코드 체크아웃
+        uses: actions/checkout@v4
+
+      - name: Docker Buildx 설정
+        uses: docker/setup-buildx-action@v3
+
+      - name: GHCR 로그인
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: SHA 단축 태그 생성
+        id: meta
+        run: echo "sha=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+
+      - name: Docker 이미지 빌드 & 푸시
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:latest
+            ${{ env.IMAGE_NAME }}:sha-${{ steps.meta.outputs.sha }}
+          cache-from: type=gha,scope=ipx-ai
+          cache-to: type=gha,mode=max,scope=ipx-ai
+
+  # =====================================================
+  # 2단계: EC2 배포 + 헬스체크
+  # =====================================================
+  deploy:
+    name: EC2 배포
+    needs: build-and-push
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: EC2에 SSH 배포
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            set -e
+            cd /opt/ipx
+
+            echo "=== [1/4] 새 이미지 pull ==="
+            docker compose -f docker-compose.prod.yml --env-file .env.prod pull app-python
+
+            echo "=== [2/4] 컨테이너 재생성 (의존 서비스는 건드리지 않음) ==="
+            docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --no-deps app-python
+
+            echo "=== [3/4] 헬스체크 대기 (BGE-M3 로드 시간 고려, 최대 5분) ==="
+            HEALTHY=false
+            for i in $(seq 1 60); do
+              STATUS=$(docker inspect --format='{{.State.Health.Status}}' patent-python 2>/dev/null || echo "missing")
+              echo "시도 $i/60 - 상태: $STATUS"
+              if [ "$STATUS" = "healthy" ]; then
+                HEALTHY=true
+                break
+              fi
+              sleep 5
+            done
+
+            if [ "$HEALTHY" != "true" ]; then
+              echo "❌ 헬스체크 실패"
+              echo "--- 컨테이너 로그 (마지막 150줄) ---"
+              docker logs patent-python --tail 150
+              exit 1
+            fi
+            echo "✅ 헬스체크 통과"
+
+            echo "=== [4/4] 사용하지 않는 이미지 정리 ==="
+            docker image prune -f
+
+            echo "=== 배포 완료 ==="
+
+      - name: 배포 결과 요약
+        if: always()
+        run: |
+          if [ "${{ job.status }}" = "success" ]; then
+            echo "✅ IPX-AI Production 배포 성공"
+            echo "Image: ${{ env.IMAGE_NAME }}:sha-${{ needs.build-and-push.outputs.image-tag }}"
+          else
+            echo "❌ IPX-AI Production 배포 실패"
+            echo "수동 롤백:"
+            echo "  ssh로 EC2 접속, docker-compose.prod.yml의 image 태그를 이전 sha로 변경 후 up -d"
+          fi
