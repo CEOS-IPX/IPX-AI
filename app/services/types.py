@@ -1,7 +1,11 @@
 """
 ============================================================
 검색 파이프라인 공통 타입
-: 세 소스(OpenSearch, pgvector, KIPRIS)의 동일한 반환 결과
+============================================================
+세 가지 소스가 있음:
+  - opensearch: OpenSearch BM25 검색 결과
+  - pgvector: pgvector 벡터 검색 결과
+  - manual: 사용자가 출원번호로 직접 지정한 특허
 ============================================================
 """
 
@@ -9,7 +13,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
-SourceType = Literal["opensearch", "pgvector", "kipris"]
+SourceType = Literal["opensearch", "pgvector", "manual"]
 
 
 class PatentScore(BaseModel):
