@@ -14,7 +14,10 @@ from fastapi import FastAPI
 
 from app.routers import search
 from app.services.embedding import embedding_service
+from app.services.kipris_client import kipris_service
 from app.services.opensearch_client import opensearch_service
+from app.services.pgvector_client import pgvector_service
+from app.services.progress_tracker import progress_tracker
 
 logging.basicConfig(
     level=logging.INFO,
@@ -36,6 +39,9 @@ async def lifespan(app: FastAPI):
     # === Shutdown ===
     logger.info("[Shutdown] 리소스 정리 시작")
     await opensearch_service.close()
+    await pgvector_service.close()
+    await kipris_service.close()
+    await progress_tracker.close()
     logger.info("[Shutdown] 서버 종료")
 
 
