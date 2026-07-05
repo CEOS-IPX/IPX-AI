@@ -23,6 +23,12 @@ import pandas as pd
 from datetime import datetime, date
 from pathlib import Path
 
+from app.preprocessing import (
+    clean_text,
+    strip_xml_tags,
+    extract_independent_from_bulk_xml,
+)
+
 # ===== 설정 =====
 BULK_DIR = "./data/bulk/TXT"        # 압축 해제된 TXT 폴더 경로
 DELIMITER = "¶"                             # KIPRIS BULK 반환 .txt 파일 구분자
@@ -89,7 +95,7 @@ def parse_abstract() -> pd.DataFrame:
 def parse_claim() -> pd.DataFrame:
     """청구항 파싱 (XML 태그 제거 + 독립 청구항 추출)"""
     df = read_bulk_file("Claim.txt")
-    df["claims_independent"] = df["청구항"].apply(extract_independent_claims)
+    df["claims_independent"] = df["청구항"].apply(extract_independent_from_bulk_xml)
     return df[["출원번호", "claims_independent"]].rename(columns={"출원번호": "application_number"})
 
 
@@ -135,97 +141,6 @@ def parse_related_person() -> pd.DataFrame:
 # ============================================================
 # 2. 텍스트 전처리
 # ============================================================
-
-# XML/HTML 태그 패턴
-XML_TAG_PATTERN = re.compile(r"<[^>]+>")
-NEWLINE_TAG_PATTERN = re.compile(r"<br\s*/?>", re.IGNORECASE)
-
-# 상투어 패턴
-BOILERPLATE_PATTERNS = [
-    re.compile(r"본\s*발명은\s*"),
-    re.compile(r"본\s*고안은\s*"),
-    re.compile(r"에\s*관한\s*것으로[서,.]?\s*"),
-    re.compile(r"에\s*관한\s*것이다[.]?\s*"),
-    re.compile(r"상기\s*구성에\s*의하면\s*"),
-    re.compile(r"이하[,]?\s*첨부된?\s*도면을?\s*참조하여\s*상세히\s*설명한다[.]?\s*"),
-    re.compile(r"것을\s*특징으로\s*하는\s*"),
-]
-
-# 노이즈 패턴
-NOISE_PATTERNS = [
-    re.compile(r"\[\d{4}\]"),               # 문단번호
-    re.compile(r"도\s*\d+[a-zA-Z]?"),       # 도면 참조
-    re.compile(r"FIG\.\s*\d+", re.IGNORECASE),
-    re.compile(r"\(주\)"),
-    re.compile(r"\(주식회사\)"),
-    re.compile(r"[※■▶▷●○◆◇]"),
-]
-
-# 종속 청구항 판별 패턴
-DEPENDENT_PATTERN = re.compile(r"제\s*\d+\s*항에\s*있어서")
-
-
-def strip_xml_tags(text: str) -> str:
-    """XML/HTML 태그 제거"""
-    if not text or pd.isna(text):
-        return ""
-    # <br> 태그는 공백으로 치환
-    text = NEWLINE_TAG_PATTERN.sub(" ", text)
-    # 나머지 태그 모두 제거
-    text = XML_TAG_PATTERN.sub("", text)
-    return text.strip()
-
-
-def clean_text(text: str) -> str:
-    """초록/청구항 전처리"""
-    if not text:
-        return ""
-
-    # 1. 유니코드 정규화 (전각→반각)
-    text = unicodedata.normalize("NFKC", text)
-
-    # 2. 상투어 제거
-    for pattern in BOILERPLATE_PATTERNS:
-        text = pattern.sub("", text)
-
-    # 3. 노이즈 제거
-    for pattern in NOISE_PATTERNS:
-        text = pattern.sub("", text)
-
-    # 4. 연속 공백 정리
-    text = re.sub(r"\s+", " ", text).strip()
-
-    return text
-
-
-def extract_independent_claims(claims_text: str) -> str:
-    """청구항 XML에서 독립 청구항만 추출"""
-    if not claims_text or pd.isna(claims_text):
-        return ""
-
-    # 각 <claim> 블록 추출
-    claim_blocks = re.findall(
-        r'<claim\s+num="(\d+)">(.*?)</claim>',
-        claims_text,
-        re.DOTALL
-    )
-
-    independent = []
-    for num, content in claim_blocks:
-        # 삭제 표시된 청구항 제외
-        if '<AmendStatus status="D">' in content:
-            continue
-
-        # 내부 텍스트만 추출
-        text = strip_xml_tags(content)
-
-        # 종속 청구항 제외
-        if DEPENDENT_PATTERN.search(text):
-            continue
-
-        independent.append(text)
-
-    return " ".join(independent)
 
 
 def parse_date(date_str: str) -> str | None:
@@ -449,21 +364,17 @@ def bulk_insert_pgvector(conn, df: pd.DataFrame):
     for _, row in df.iterrows():
         values.append((
             row["application_number"],
-            row["title"],
-            row["abstract_clean"],
             row["embedding"],
             row.get("ipc_codes", []),
-            row.get("legal_status", ""),
-            row.get("application_date"),
         ))
 
     psycopg2.extras.execute_batch(
         cursor,
         """
         INSERT INTO patent_vectors
-            (application_number, title, abstract_clean, embedding, ipc_codes, legal_status, application_date)
+            (application_number, embedding, ipc_codes)
         VALUES
-            (%s, %s, %s, %s::vector, %s, %s, %s)
+            (%s, %s::vector, %s)
         ON CONFLICT (application_number) DO NOTHING
         """,
         values,
