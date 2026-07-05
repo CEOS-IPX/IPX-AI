@@ -40,6 +40,10 @@ class Settings(BaseSettings):
 
     claude_summary_model: str = "claude-haiku-4-5-20251001"
 
+    claude_component_model: str = "claude-haiku-4-5-20251001"
+
+    claude_novelty_model: str = "claude-haiku-4-5-20251001"
+
     # ===== KIPRIS API =====
     kipris_api_key: str
     kipris_base_url: str = "http://plus.kipris.or.kr/kipo-api/kipi"

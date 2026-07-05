@@ -12,11 +12,11 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app.routers import search
+from app.routers import search, components, novelty
 from app.services.embedding import embedding_service
-from app.services.kipris_client import kipris_service
 from app.services.opensearch_client import opensearch_service
 from app.services.pgvector_client import pgvector_service
+from app.services.kipris_client import kipris_service
 from app.services.progress_tracker import progress_tracker
 
 logging.basicConfig(
@@ -51,6 +51,8 @@ app = FastAPI(
 )
 
 app.include_router(search.router)
+app.include_router(components.router)
+app.include_router(novelty.router)
 
 
 @app.get("/health")
