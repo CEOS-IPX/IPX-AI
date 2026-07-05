@@ -2,14 +2,19 @@
 ============================================================
 LLM 의도 해석 서비스 (Gemini 2.5 Flash-Lite)
 ============================================================
-사용자의 자연어 입력을 분석-> 검색 파이프라인이 사용할 JSON 구조로 변환
+변리사가 입력한 발명 정보를 분석해서 검색 파이프라인이 사용할 JSON 구조로 변환
 
-출력 JSON 예시
+입력:
+  - title: 발명의 명칭
+  - description: 핵심 기술 설명
+  - technical_field: 기술 분야 (선택)
+
+출력 JSON 예시:
 {
   "is_valid": true,
   "reason_invalid": null,
-  "keywords": ["급속충전", "리튬이온", "음극재"],
-  "ipc_codes": ["H01M 10/052", "H01M 4/13"],
+  "keywords": ["생분해성수지", "나노입자", "표면개질", "코팅", "친환경"],
+  "ipc_codes": ["C09D 5/00", "C08L 67/02"]
 }
 ============================================================
 """
@@ -19,6 +24,7 @@ import logging
 from typing import Optional
 import httpx
 from pydantic import BaseModel, Field
+
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -34,7 +40,7 @@ class IntentResult(BaseModel):
     is_valid: bool = Field(description="특허 검색에 적합한 입력인지")
     reason_invalid: Optional[str] = Field(default=None, description="유효하지 않을 때의 사유")
     keywords: list[str] = Field(default_factory=list, description="핵심 기술 키워드")
-    ipc_codes: list[str] = Field(default_factory=list, description="관련 IPC 코드")
+    ipc_codes: list[str] = Field(default_factory=list, description="LLM이 추정한 IPC 코드")
 
 
 # ============================================================
@@ -43,15 +49,17 @@ class IntentResult(BaseModel):
 
 SYSTEM_INSTRUCTION = """\
 당신은 특허 검색을 도와주는 의도 해석 전문가입니다.
-사용자의 자연어 입력을 분석해서 특허 검색 파이프라인이 사용할 구조화된 JSON을 생성하세요.
+변리사가 출원하려는 발명의 정보를 분석해서 선행기술 검색에 사용할 구조화된 JSON을 생성하세요.
 
 ## 입력 형식
-사용자 메시지에 다음 정보가 포함될 수 있습니다:
-- "검색 도메인": 사용자가 미리 선택한 기술 분야 (예: 이차전지, 반도체, AI)
-- "사용자 입력": 자연어 검색어
+변리사가 출원하려는 발명에 대해 다음 정보를 제공합니다:
+- "발명의 명칭": 발명을 한 줄로 표현한 제목 (가장 핵심 신호)
+- "기술 분야": 발명이 속한 분야 (예: 고분자 화학, 이차전지) - 컨텍스트 정보
+- "핵심 기술 설명": 발명의 구조, 작동 원리, 효과에 대한 자연어 설명 (가장 풍부한 정보)
 
-도메인이 제공되면 키워드와 IPC 코드 추정 시 해당 도메인에 집중하세요.
-도메인이 없으면 사용자 입력만으로 판단하세요.
+세 정보를 종합해서 키워드와 IPC를 추출하세요.
+- 명칭은 발명의 정체성, 설명은 발명의 디테일을 제공합니다.
+- 기술 분야는 IPC 추정의 정확도를 높이는 보조 컨텍스트로 활용하세요.
 
 ## 출력 규칙
 
@@ -68,48 +76,62 @@ SYSTEM_INSTRUCTION = """\
 
 - **is_valid**: 다음 중 하나라도 해당되면 false
   - 욕설, 잡담, 무의미한 입력
-  - 너무 모호해서 검색할 수 없는 입력 (예: "좋은 거", "아무거나")
-  - 특허와 무관한 주제 (예: "오늘 날씨", "맛집 추천")
+  - 너무 모호해서 검색할 수 없는 입력 (예: 명칭/설명이 한두 단어)
+  - 특허와 무관한 주제
   - 위 조건에 해당하지 않으면 true
 
-- **reason_invalid**: is_valid=false일 때만 사용자에게 보여줄 친절한 메시지 작성. true면 null
+- **reason_invalid**: is_valid=false일 때만 사용자에게 보여줄 친절한 메시지. true면 null
 
 - **keywords**: 3~10개의 단어 단위 키워드
-  - 기술 키워드: 발명의 핵심 기술 (예: "리튬이온전지", "음극재", "고체전해질")
-  - 문제 키워드: 사용자가 해결하려는 문제 (예: "급속충전", "배터리수명", "열화")
+  - 명칭과 설명에서 핵심 기술 용어를 추출
+  - 기술 키워드: 발명의 구조/재료/방식 (예: "리튬이온전지", "음극재", "PLA수지")
+  - 문제/효과 키워드: 해결 과제 또는 효과 (예: "급속충전", "내수성향상", "생분해성")
   - 단어 또는 짧은 복합명사 (문장 X)
   - 한글/영문 혼용 가능 (예: "LIB", "이차전지")
   - 너무 일반적인 단어 제외 (예: "기술", "방법", "장치")
 
 - **ipc_codes**: 관련 IPC 분류 코드 (메인 그룹 또는 서브 그룹 수준)
-  - 예: ["H01M 10/052"], ["B60L 53/16", "H02J 7/00"]
+  - 기술 분야가 제공되었으면 그 분야에 맞는 IPC를 우선 고려
+  - 예: ["H01M 10/052"], ["C09D 5/00", "C08L 67/02"]
   - 확실한 것만 1~5개. 모르겠으면 빈 배열
 
 ## 예시
 
-입력: "급속충전 시 배터리 열화를 줄이는 기술"
+입력:
+발명의 명칭: 생분해성 고분자 코팅 조성물
+기술 분야: 고분자 화학, 친환경 코팅
+핵심 기술 설명: 생분해성 폴리에스터 수지에 표면 개질된 무기 나노입자를 분산시키고, 유기용제 없이 수계 분산 공정으로 코팅층을 형성하는 친환경 코팅 조성물.
+
 출력:
 {
   "is_valid": true,
   "reason_invalid": null,
-  "keywords": ["급속충전", "리튬이온전지", "배터리수명", "열화", "음극재", "사이클수명"],
-  "ipc_codes": ["H01M 10/052", "H01M 4/13"]
+  "keywords": ["생분해성", "폴리에스터수지", "나노입자", "표면개질", "수계분산", "코팅조성물", "PLA"],
+  "ipc_codes": ["C09D 5/00", "C09D 167/00", "C08L 67/02"]
 }
 
-입력: "전기차 충전 인프라"
+입력:
+발명의 명칭: 급속충전 리튬이온전지 음극재
+기술 분야: 이차전지
+핵심 기술 설명: 흑연과 실리콘 나노복합체를 사용하여 급속충전 시 발생하는 열화를 줄이고 사이클 수명을 향상시키는 음극재.
+
 출력:
 {
   "is_valid": true,
   "reason_invalid": null,
-  "keywords": ["전기차충전", "충전스테이션", "충전기", "커넥터", "전력제어"],
-  "ipc_codes": ["B60L 53/00", "H02J 7/00"]
+  "keywords": ["급속충전", "리튬이온전지", "음극재", "실리콘나노복합체", "흑연", "열화", "사이클수명"],
+  "ipc_codes": ["H01M 10/052", "H01M 4/38", "H01M 4/13"]
 }
 
-입력: "오늘 점심 뭐 먹지"
+입력:
+발명의 명칭: abc
+기술 분야: (미지정)
+핵심 기술 설명: 모르겠음
+
 출력:
 {
   "is_valid": false,
-  "reason_invalid": "특허 검색과 관련된 기술 주제를 입력해 주세요.",
+  "reason_invalid": "발명의 명칭과 핵심 기술 설명을 구체적으로 입력해 주세요.",
   "keywords": [],
   "ipc_codes": []
 }
@@ -122,12 +144,18 @@ SYSTEM_INSTRUCTION = """\
 GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent"
 
 
-async def interpret_intent(user_query: str, domain: Optional[str] = None) -> IntentResult:
+async def interpret_intent(
+    title: str,
+    description: str,
+    technical_field: Optional[str] = None,
+) -> IntentResult:
     """
-    사용자 자연어 입력을 의도 해석 결과로 변환
+    발명 정보를 의도 해석 결과로 변환
 
     Args:
-        user_query: 사용자 자연어 입력
+        title: 발명의 명칭
+        description: 핵심 기술 설명
+        technical_field: 기술 분야 (선택)
 
     Returns:
         IntentResult: 의도 해석 결과
@@ -137,7 +165,11 @@ async def interpret_intent(user_query: str, domain: Optional[str] = None) -> Int
         httpx.HTTPError: API 호출 실패 시
     """
 
-    user_text = f"검색 도메인: {domain}\n사용자 입력: {user_query}" if domain else user_query
+    user_text = (
+        f"발명의 명칭: {title}\n"
+        f"기술 분야: {technical_field or '(미지정)'}\n"
+        f"핵심 기술 설명: {description}"
+    )
 
     payload = {
         "system_instruction": {
@@ -160,7 +192,7 @@ async def interpret_intent(user_query: str, domain: Optional[str] = None) -> Int
         response = await client.post(
             GEMINI_ENDPOINT,
             params={"key": settings.gemini_api_key},
-            json=payload
+            json=payload,
         )
         response.raise_for_status()
         data = response.json()
