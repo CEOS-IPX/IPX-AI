@@ -26,6 +26,11 @@ class Settings(BaseSettings):
     opensearch_port: int = 9200
     opensearch_index: str = "patents"
 
+    # ===== Redis =====
+    redis_host: str = "localhost"
+    redis_port: int = 6379
+    redis_password: str = ""
+
     # ===== 외부 LLM API =====
     gemini_api_key: str
     gemini_model: str = "gemini-2.5-flash-lite"
@@ -33,9 +38,11 @@ class Settings(BaseSettings):
     claude_api_key: str = ""
     claude_model: str = "claude-haiku-4-5-20251001"  # 성능 안나오면 "claude-sonnet-4-6"
 
-    # # ===== KIPRIS API =====
-    # kipris_api_key: str = ""
-    # kipris_base_url: str = ""
+    claude_summary_model: str = "claude-haiku-4-5-20251001"
+
+    # ===== KIPRIS API =====
+    kipris_api_key: str
+    kipris_base_url: str = "http://plus.kipris.or.kr/kipo-api/kipi"
 
     # ===== 동의어 사전 =====
     synonyms_file_path: str = "app/resources/synonyms_patent.txt"
