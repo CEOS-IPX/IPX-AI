@@ -46,10 +46,35 @@ class Settings(BaseSettings):
 
     # ===== KIPRIS API =====
     kipris_api_key: str
-    kipris_base_url: str = "http://plus.kipris.or.kr/kipo-api/kipi"
+
+    # 상세 조회용 (기존 kipris_base_url이 이 값이었음)
+    kipris_kipo_base_url: str = "http://plus.kipris.or.kr/kipo-api/kipi"
+
+    # 검색 API용 (신규)
+    kipris_openapi_base_url: str = "http://plus.kipris.or.kr/openapi/rest"
 
     # ===== 동의어 사전 =====
     synonyms_file_path: str = "app/resources/synonyms_patent.txt"
 
+    # ===== 증분 배치 관련 =====
+    # MPV 도메인 IPC prefix (G06N, G06T)
+    target_ipc_prefixes: list[str] = ["G06N", "G06T"]
+
+    # 배치 실행 요일/시간 (KST) : 매주 월요일 04:00
+    ingestion_cron_day_of_week: str = "mon"
+    ingestion_cron_hour: int = 4
+    ingestion_cron_minute: int = 0
+
+    # 배치 조회 기간 (일)
+    ingestion_lookback_days: int = 7
+
+    # KIPRIS API rate limiting (초당 호출 수)
+    kipris_rate_limit_per_second: int = 5
+
+    # 실패 재시도 최대 횟수 (이후 영구 제거)
+    ingestion_max_retry: int = 3
+
+    # 실패 로그 파일 경로
+    ingestion_failure_log_path: str = "/data/failed_ingestions.txt"
 
 settings = Settings()

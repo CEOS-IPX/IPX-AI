@@ -2,8 +2,7 @@
 ============================================================
 FastAPI 진입점
 ============================================================
-서버 시작 시 BGE-M3 모델을 로드한다.
-처음 로드 시 ~2GB 다운로드 + 메모리 적재로 수 분 소요될 수 있다.
+서버 시작 시 BGE-M3 모델을 로드하고, APScheduler를 시작한다.
 ============================================================
 """
 
@@ -18,6 +17,7 @@ from app.services.opensearch_client import opensearch_service
 from app.services.pgvector_client import pgvector_service
 from app.services.kipris_client import kipris_service
 from app.services.progress_tracker import progress_tracker
+from app.scheduler import start_scheduler, shutdown_scheduler
 
 logging.basicConfig(
     level=logging.INFO,
@@ -32,12 +32,17 @@ async def lifespan(app: FastAPI):
     # === Startup ===
     logger.info("[Startup] BGE-M3 모델 로드 시작")
     embedding_service.load()
+
+    logger.info("[Startup] 스케줄러 시작")
+    start_scheduler()
+
     logger.info("[Startup] 초기화 완료, 요청 처리 준비됨")
 
     yield
 
     # === Shutdown ===
     logger.info("[Shutdown] 리소스 정리 시작")
+    shutdown_scheduler()
     await opensearch_service.close()
     await pgvector_service.close()
     await kipris_service.close()
