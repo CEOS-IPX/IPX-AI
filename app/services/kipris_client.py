@@ -1,6 +1,20 @@
 """
 ============================================================
-KIPRIS API 클라이언트 (단건 조회 전용)
+KIPRIS API 클라이언트
+============================================================
+KIPRIS Plus의 두 가지 API를 사용:
+
+1. 상세 조회 (getBibliographyDetailInfoSearch)
+   - Base URL: http://plus.kipris.or.kr/kipo-api/kipi
+   - 인증: ServiceKey 파라미터
+   - 사용자 lookup 및 증분 배치의 상세 조회에서 사용
+   - 청구항 포함
+
+2. 출원일자별 검색 (applicationDateSearchInfo)
+   - Base URL: http://plus.kipris.or.kr/openapi/rest
+   - 인증: accessKey 파라미터
+   - 증분 배치의 사전 필터링에서 사용
+   - 청구항 없음 (서지 정보 + 초록 + IPC만)
 ============================================================
 """
 
@@ -21,12 +35,12 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================================
-# 응답 모델: KIPRIS 단건 조회 결과
+# 응답 모델: KIPRIS 조회 결과
 # ============================================================
 
 class KiprisPatentDetail(BaseModel):
     """
-    KIPRIS에서 가져온 특허 상세 정보
+    KIPRIS에서 가져온 특허 상세 정보 (getBibliographyDetailInfoSearch)
     BULK 적재 필드와 동일한 구조
       - CPC: API로 불가능 (제외)
       - 이미지경로: OpenSearch에 안 넣음 (제외)
@@ -50,9 +64,20 @@ class KiprisPatentDetail(BaseModel):
     )
     ipc_codes: list[str] = Field(default_factory=list, description="IPC 분류 코드 목록")
 
-    # 관계자 (한글명만, 여러 명일 경우 쉼표로 join)
+    # 관계자 (한글명, 여러 명일 경우 쉼표로 join)
     applicants: Optional[str] = Field(default=None, description="출원인명 (예: '엘지전자 주식회사, 삼성전자 주식회사')")
     inventors: Optional[str] = Field(default=None, description="발명자명")
+
+
+class KiprisPatentSummary(BaseModel):
+    """
+    KIPRIS 검색 API 응답 항목 (applicationDateSearchInfo)
+    증분 배치의 IPC 사전 필터링용. 상세 정보는 어차피 상세 조회에서 다시 가져오므로
+    필터링에 꼭 필요한 최소 필드만 유지.
+    """
+
+    application_number: str
+    ipc_codes: list[str] = Field(default_factory=list)
 
 
 # ============================================================
@@ -60,21 +85,31 @@ class KiprisPatentDetail(BaseModel):
 # ============================================================
 
 class KiprisService:
-    """KIPRIS Plus API 클라이언트 (단건 조회 전용)"""
+    """KIPRIS Plus API 클라이언트"""
 
     DETAIL_SEARCH_PATH = "/patUtiModInfoSearchSevice/getBibliographyDetailInfoSearch"
+    APPLICATION_DATE_SEARCH_PATH = "/patUtiModInfoSearchSevice/applicationDateSearchInfo"
 
     def __init__(self):
-        self._client: Optional[httpx.AsyncClient] = None
+        self._detail_client: Optional[httpx.AsyncClient] = None    # kipo-api/kipi
+        self._search_client: Optional[httpx.AsyncClient] = None    # openapi/rest
 
     @property
-    def client(self) -> httpx.AsyncClient:
-        if self._client is None:
-            self._client = httpx.AsyncClient(timeout=15.0)
-        return self._client
+    def detail_client(self) -> httpx.AsyncClient:
+        """상세 조회용 클라이언트 (kipo-api/kipi base)"""
+        if self._detail_client is None:
+            self._detail_client = httpx.AsyncClient(timeout=15.0)
+        return self._detail_client
+
+    @property
+    def search_client(self) -> httpx.AsyncClient:
+        """검색용 클라이언트 (openapi/rest base)"""
+        if self._search_client is None:
+            self._search_client = httpx.AsyncClient(timeout=30.0)
+        return self._search_client
 
     # ============================================================
-    # 출원번호 단건 상세 조회
+    # 1. 출원번호 단건 상세 조회
     # ============================================================
 
     async def fetch_by_application_number(
@@ -97,10 +132,10 @@ class KiprisService:
             "applicationNumber": normalized,
         }
 
-        url = f"{settings.kipris_base_url}{self.DETAIL_SEARCH_PATH}"
+        url = f"{settings.kipris_kipo_base_url}{self.DETAIL_SEARCH_PATH}"
 
         try:
-            response = await self.client.get(url, params=params)
+            response = await self.detail_client.get(url, params=params)
             response.raise_for_status()
             xml_text = response.text
         except httpx.HTTPError:
@@ -119,7 +154,77 @@ class KiprisService:
         return result
 
     # ============================================================
-    # XML 파싱
+    # 2. 출원일자별 검색 (증분 배치용)
+    # ============================================================
+
+    async def search_by_application_date(
+        self,
+        application_date: str,   # "20260705"
+        docs_start: int = 1,
+        docs_count: int = 500,   # 최대 500
+    ) -> tuple[list[KiprisPatentSummary], int]:
+        """
+        특정 출원일자의 특허 목록 조회.
+
+        Args:
+            application_date: 출원일자 (YYYYMMDD)
+            docs_start: 페이지 시작 번호 (1부터)
+            docs_count: 페이지당 건수 (기본 500)
+
+        Returns:
+            (특허 목록, 전체 건수) 튜플
+        """
+        params = {
+            "applicationDate": application_date,
+            "docsStart": docs_start,
+            "docsCount": docs_count,
+            "patent": "true",
+            "utility": "true",
+            "sortSpec": "AD",
+            "descSort": "false",
+            "accessKey": settings.kipris_api_key,
+        }
+
+        url = f"{settings.kipris_openapi_base_url}{self.APPLICATION_DATE_SEARCH_PATH}"
+
+        try:
+            response = await self.search_client.get(url, params=params)
+            response.raise_for_status()
+            xml_text = response.text
+        except httpx.HTTPError:
+            logger.exception(
+                f"[KIPRIS] 검색 API 호출 실패: date={application_date}, start={docs_start}"
+            )
+            return [], 0
+
+        try:
+            root = ET.fromstring(xml_text)
+        except ET.ParseError:
+            logger.exception(f"[KIPRIS] 검색 응답 XML 파싱 실패: date={application_date}")
+            return [], 0
+
+        # 전체 건수
+        total_count_str = self._get_text(root, ".//TotalSearchCount") or "0"
+        try:
+            total_count = int(total_count_str)
+        except ValueError:
+            total_count = 0
+
+        # 특허 목록 파싱
+        summaries: list[KiprisPatentSummary] = []
+        for item in root.findall(".//PatentUtilityInfo"):
+            summary = self._parse_summary(item)
+            if summary:
+                summaries.append(summary)
+
+        logger.info(
+            f"[KIPRIS] 검색 완료: date={application_date}, "
+            f"start={docs_start}, 반환={len(summaries)}, 전체={total_count}"
+        )
+        return summaries, total_count
+
+    # ============================================================
+    # XML 파싱: 상세 조회
     # ============================================================
 
     def _parse_detail_response(self, xml_text: str) -> Optional[KiprisPatentDetail]:
@@ -178,7 +283,7 @@ class KiprisService:
         claims_independent = clean_text(independent_joined) if independent_joined else None
         claims_independent = claims_independent if claims_independent else None
 
-        # ===== 출원인 (한글명만, 쉼표로 join) =====
+        # ===== 출원인 (한글명, 쉼표로 join) =====
         applicant_names: list[str] = []
         for applicant in item.findall(".//applicantInfo"):
             name = self._get_text(applicant, "name")
@@ -186,7 +291,7 @@ class KiprisService:
                 applicant_names.append(name)
         applicants = ", ".join(applicant_names) if applicant_names else None
 
-        # ===== 발명자 (한글명만, 쉼표로 join) =====
+        # ===== 발명자 (한글명, 쉼표로 join) =====
         inventor_names: list[str] = []
         for inventor in item.findall(".//inventorInfo"):
             name = self._get_text(inventor, "name")
@@ -209,6 +314,36 @@ class KiprisService:
             applicants=applicants,
             inventors=inventors,
         )
+
+    # ============================================================
+    # XML 파싱: 검색 API
+    # ============================================================
+
+    def _parse_summary(self, item: ET.Element) -> Optional[KiprisPatentSummary]:
+        """
+        검색 응답의 PatentUtilityInfo → KiprisPatentSummary
+        IPC 필터링에 필요한 최소 필드만 추출 (application_number, ipc_codes).
+        """
+        try:
+            application_number = self._get_text(item, "ApplicationNumber")
+            if not application_number:
+                return None
+
+            # IPC 코드는 파이프 구분자
+            ipc_raw = self._get_text(item, "InternationalpatentclassificationNumber") or ""
+            ipc_codes = [
+                code.strip()
+                for code in ipc_raw.split("|")
+                if code.strip()
+            ]
+
+            return KiprisPatentSummary(
+                application_number=application_number,
+                ipc_codes=ipc_codes,
+            )
+        except Exception:
+            logger.exception("[KIPRIS] 검색 결과 항목 파싱 실패")
+            return None
 
     # ============================================================
     # 유틸리티
@@ -250,9 +385,12 @@ class KiprisService:
 
     async def close(self) -> None:
         """HTTP 클라이언트 정리 (서버 종료 시 호출)"""
-        if self._client is not None:
-            await self._client.aclose()
-            self._client = None
+        if self._detail_client is not None:
+            await self._detail_client.aclose()
+            self._detail_client = None
+        if self._search_client is not None:
+            await self._search_client.aclose()
+            self._search_client = None
 
 
 # ============================================================
