@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app.routers import search, components, novelty
+from app.routers import search, components, novelty, inventive_step
 from app.services.embedding import embedding_service
 from app.services.opensearch_client import opensearch_service
 from app.services.pgvector_client import pgvector_service
@@ -58,6 +58,7 @@ app = FastAPI(
 app.include_router(search.router)
 app.include_router(components.router)
 app.include_router(novelty.router)
+app.include_router(inventive_step.router)
 
 
 @app.get("/health")
