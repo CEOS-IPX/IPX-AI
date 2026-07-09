@@ -44,6 +44,8 @@ class Settings(BaseSettings):
 
     claude_novelty_model: str = "claude-haiku-4-5-20251001"
 
+    claude_inventive_step_model: str = "claude-haiku-4-5-20251001"
+
     # ===== KIPRIS API =====
     kipris_api_key: str
 
