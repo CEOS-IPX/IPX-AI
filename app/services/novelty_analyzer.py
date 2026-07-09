@@ -14,7 +14,10 @@
 결과 구조:
   - 전체 유사도 (매우 높음/높음/보통/낮음)
   - 결론 문구 (신규성 충족 여부 판단)
-  - 구성요소별 대비 결과 (동일/유사/신규 + 개시 내용)
+  - 구성요소별 대비 결과:
+    - 판정 (동일/유사/신규)
+    - 자연스러운 서술 (disclosure_text)
+    - 원문 인용 + 출처 (citation)
 
 모델: Claude Haiku
 ============================================================
@@ -50,13 +53,20 @@ class PriorArtForAnalysis(BaseModel):
     """분석 대상 선행기술 특허"""
     application_number: str = Field(description="출원번호")
     title: str = Field(description="발명의 명칭")
-    claims_independent: str = Field(description="독립 청구항 텍스트")
+    claims_independent: str = Field(
+        description="독립 청구항 텍스트 ('청구항 N: 본문' 형식으로 여러 개 join됨)"
+    )
 
 
 class ComponentComparison(BaseModel):
     """구성요소 1개에 대한 대비 결과"""
     component_label: str = Field(description="구성요소 라벨 (A, B, C, ...)")
-    disclosure_text: str = Field(description="선행기술의 대응 게시 내용")
+    disclosure_text: str = Field(description="선행기술의 대응 게시 내용 (자연스러운 서술)")
+    citation: Optional[str] = Field(
+        default=None,
+        description="원문 인용 (예: '청구항 1: H₂SO₄를 1.0~1.5 M 농도로 투입하여...') "
+                    "개시되지 않은 경우 None"
+    )
     result: str = Field(description="대비 결과: '동일' | '유사' | '신규'")
 
 
@@ -82,6 +92,7 @@ SYSTEM_PROMPT = """\
 2. 한국어로 작성.
 3. 모든 구성요소를 빠짐없이 판단.
 4. 판단은 청구항에 명시된 내용을 기준으로. 추측 금지.
+5. 청구항은 "청구항 N: 본문" 형식으로 제공됨. 인용 시 정확한 청구항 번호와 문장을 그대로 사용.
 
 각 구성요소의 대비 결과:
 - "동일": 선행기술 청구항에 동일한 구성이 명시적으로 개시됨
@@ -101,27 +112,34 @@ overall_similarity 판단 기준:
   "component_results": [
     {
       "component_label": "A",
-      "disclosure_text": "선행기술 청구항에 어떻게 개시되어 있는지 구체적 내용. 개시되지 않았다면 '해당 구성이 선행기술 청구항에 개시되지 않음'",
+      "disclosure_text": "선행기술 청구항에 어떻게 개시되어 있는지 자연스러운 서술",
+      "citation": "청구항 N: 원문을 그대로 인용한 문장",
       "result": "동일|유사|신규"
     },
     ...
   ]
 }
 
-disclosure_text 작성 가이드:
-- 개시된 경우: 청구항 내용을 그대로 인용하지 말고, 자연스러운 서술 문장으로.
-              예: "H₂SO₄ 1.0~1.5 M을 폐리튬이온전지 양극재에 투입하여 니켈과 코발트를 침출하는 구성이 개시됨."
-- 개시 안 된 경우: "해당 구성이 선행기술 청구항에 개시되지 않음."
+각 필드 작성 가이드:
 
-conclusion_text 작성 규칙:
-- "신규"로 판정된 구성요소가 하나라도 있으면:
-    "구성요소 [해당 라벨들]가(이) 주인용발명에 개시되어 있지 않은 차이점입니다. 
-     본 발명은 단일 선행문헌과 실질적으로 동일하지 않으므로, 특허법 제29조 제1항의 신규성을 충족합니다."
-    (라벨 여러 개면 "구성요소 A, B가", "구성요소 C·D가" 등으로 자연스럽게)
+- disclosure_text: 자연스러운 문장으로 서술.
+    예: "H₂SO₄를 1.0~1.5 M 농도로 폐리튬이온전지 양극재에 투입하여 침출하는 구성이 개시됨."
+    개시 안 된 경우: "해당 구성이 선행기술 청구항에 개시되지 않음."
 
-- 모두 "동일" 또는 "유사"이면:
-    "본 발명의 모든 구성요소가 주인용발명에 실질적으로 개시되어 있어, 
-     특허법 제29조 제1항의 신규성이 부정될 여지가 있습니다."
+- citation: 청구항 원문에서 관련 부분을 그대로 인용. 
+    반드시 "청구항 N: " 접두어와 함께 원문 표현 그대로 사용.
+    예: "청구항 1: H₂SO₄ 1.0~1.5 M을 사용하여 폐리튬이온전지 양극재를 침출하는 단계"
+    개시되지 않은 경우 null.
+    청구항에서 관련 없는 부분을 인용하지 말 것.
+
+- conclusion_text 작성 규칙:
+    - "신규"로 판정된 구성요소가 하나라도 있으면:
+        "구성요소 [해당 라벨들]가(이) 주인용발명에 개시되어 있지 않은 차이점입니다. 
+         본 발명은 단일 선행문헌과 실질적으로 동일하지 않으므로, 특허법 제29조 제1항의 신규성을 충족합니다."
+        (라벨 여러 개면 "구성요소 A, B가", "구성요소 C·D가" 등으로 자연스럽게)
+    - 모두 "동일" 또는 "유사"이면:
+        "본 발명의 모든 구성요소가 주인용발명에 실질적으로 개시되어 있어, 
+         특허법 제29조 제1항의 신규성이 부정될 여지가 있습니다."
 
 이제 JSON만 출력하세요.
 """
@@ -180,7 +198,7 @@ async def _compare_with_patent(
 
     payload = {
         "model": settings.claude_novelty_model,
-        "max_tokens": 2048,
+        "max_tokens": 3072,   # citation 필드 추가로 응답 길이 증가
         "temperature": 0.3,
         "system": SYSTEM_PROMPT,
         "messages": [{"role": "user", "content": user_message}],
