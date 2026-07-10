@@ -394,7 +394,7 @@ async def _execute_search(request: SearchRequest) -> SearchResponse:
         patent_data_for_summary.append({
             "title": src.title if src else "",
             "abstract": src.abstract if src else "",
-            "claims_independent": src.claims_independent if src else "",
+            "claims_independent": "\n".join(src.claims_independent) if src else "",
         })
 
     # ===== Step 9: 병렬 LLM 추출 (95%) =====
@@ -436,7 +436,7 @@ async def _execute_search(request: SearchRequest) -> SearchResponse:
         ),
     )
 
-    await progress_tracker.mark_completed(request.search_id, response.model_dump())
+    await progress_tracker.mark_completed(request.search_id)
     return response
 
 
@@ -463,7 +463,7 @@ async def _ensure_required_exists(application_numbers: list[str]) -> None:
 
 
 # ============================================================
-# Step 7.5: 정확한 개수 확보 (방식 A)
+# Step 7.5: 정확한 개수 확보
 # ============================================================
 
 def _apply_required_with_exact_count(
@@ -572,7 +572,7 @@ async def add_manual_patents(request: AddManualRequest) -> SearchResponse:
       5. 기존 결과 + 새 결과 병합 정렬
       6. 최종 응답 반환
     """
-    # ===== 방어적 중복 확인 (Spring이 필터링했지만 만약을 대비) =====
+    # ===== 중복 확인 (Spring이 필터링했지만 만약을 대비) =====
     existing_nums = {r.application_number for r in request.existing_results}
     duplicates = [num for num in request.application_numbers if num in existing_nums]
     if duplicates:
@@ -616,7 +616,7 @@ async def add_manual_patents(request: AddManualRequest) -> SearchResponse:
         {
             "title": src.title or "",
             "abstract": src.abstract or "",
-            "claims_independent": src.claims_independent or "",
+            "claims_independent": "\n".join(src.claims_independent) if src.claims_independent else "",
         }
         for src in new_sources.values()
     ]
@@ -690,17 +690,3 @@ async def get_search_status(search_id: str) -> dict:
     if status is None:
         raise HTTPException(status_code=404, detail="존재하지 않는 검색입니다.")
     return status
-
-
-@router.get("/{search_id}/result", response_model=SearchResponse)
-async def get_search_result(search_id: str) -> SearchResponse:
-    """완료된 검색 결과 조회"""
-    result = await progress_tracker.get_result(search_id)
-    if result is None:
-        status = await progress_tracker.get_status(search_id)
-        if status is None:
-            raise HTTPException(status_code=404, detail="존재하지 않는 검색입니다.")
-        if status["status"] == "in_progress":
-            raise HTTPException(status_code=425, detail="검색이 아직 진행 중입니다.")
-        raise HTTPException(status_code=404, detail="검색 결과가 만료되었거나 없습니다.")
-    return SearchResponse(**result)

@@ -36,9 +36,6 @@ def _progress_key(search_id: str) -> str:
 def _cancel_key(search_id: str) -> str:
     return f"search:{search_id}:cancelled"
 
-def _result_key(search_id: str) -> str:
-    return f"search:{search_id}:result"
-
 def _context_key(search_id: str) -> str:
     return f"search:{search_id}:context"
 
@@ -136,7 +133,7 @@ class ProgressTracker:
     # 완료 처리
     # ============================================================
 
-    async def mark_completed(self, search_id: str, result: dict) -> None:
+    async def mark_completed(self, search_id: str) -> None:
         await self.client.hset(
             _progress_key(search_id),
             mapping={
@@ -145,11 +142,6 @@ class ProgressTracker:
                 "progress": "100",
                 "updated_at": datetime.now(UTC).isoformat(),
             },
-        )
-        await self.client.set(
-            _result_key(search_id),
-            json.dumps(result, ensure_ascii=False),
-            ex=TTL_SECONDS,
         )
         logger.info(f"[Progress] 검색 완료: {search_id}")
 
@@ -216,12 +208,6 @@ class ProgressTracker:
             "updated_at": data.get("updated_at"),
             "error": data.get("error"),
         }
-
-    async def get_result(self, search_id: str) -> Optional[dict]:
-        result_json = await self.client.get(_result_key(search_id))
-        if not result_json:
-            return None
-        return json.loads(result_json)
 
     # ============================================================
     # 리소스 정리
