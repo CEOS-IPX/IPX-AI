@@ -20,6 +20,8 @@ import httpx
 from pydantic import BaseModel, Field
 
 from app.config import settings
+from app.services.llm_json import strip_code_fence
+from app.services.llm_retry import post_with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -156,8 +158,9 @@ async def extract_components(
     }
 
     async with httpx.AsyncClient(timeout=60.0) as client:
-        response = await client.post(CLAUDE_ENDPOINT, headers=headers, json=payload)
-        response.raise_for_status()
+        response = await post_with_retry(
+            client, CLAUDE_ENDPOINT, headers=headers, json=payload, log_prefix="[Components]",
+        )
         data = response.json()
 
     # 응답 텍스트 추출
@@ -169,7 +172,7 @@ async def extract_components(
 
     # JSON 파싱
     try:
-        parsed = json.loads(text)
+        parsed = json.loads(strip_code_fence(text))
     except json.JSONDecodeError:
         logger.error(f"[Components] JSON 파싱 실패: {text[:300]}")
         raise ValueError("Claude가 유효한 JSON을 반환하지 않았습니다.")

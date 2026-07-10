@@ -26,6 +26,7 @@ import httpx
 from pydantic import BaseModel, Field
 
 from app.config import settings
+from app.services.llm_retry import post_with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -189,12 +190,13 @@ async def interpret_intent(
     }
 
     async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.post(
+        response = await post_with_retry(
+            client,
             GEMINI_ENDPOINT,
             params={"key": settings.gemini_api_key},
             json=payload,
+            log_prefix="[Intent]",
         )
-        response.raise_for_status()
         data = response.json()
 
     # Gemini 응답에서 텍스트 추출

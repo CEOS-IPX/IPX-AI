@@ -29,6 +29,8 @@ import httpx
 from pydantic import BaseModel, Field
 
 from app.config import settings
+from app.services.llm_json import strip_code_fence
+from app.services.llm_retry import post_with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -186,8 +188,9 @@ async def summarize_one(
     }
 
     try:
-        response = await client.post(CLAUDE_ENDPOINT, headers=headers, json=payload)
-        response.raise_for_status()
+        response = await post_with_retry(
+            client, CLAUDE_ENDPOINT, headers=headers, json=payload, log_prefix="[Summary]",
+        )
         data = response.json()
     except httpx.HTTPError:
         logger.exception(f"[Summary] Claude API 호출 실패: title='{patent_title[:30] if patent_title else ''}'")
@@ -205,7 +208,7 @@ async def summarize_one(
 
     # JSON 파싱
     try:
-        parsed = json.loads(text)
+        parsed = json.loads(strip_code_fence(text))
     except json.JSONDecodeError:
         logger.error(f"[Summary] JSON 파싱 실패: title='{patent_title[:30] if patent_title else ''}', text='{text[:200]}'")
         return None

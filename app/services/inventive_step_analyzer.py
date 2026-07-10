@@ -21,6 +21,8 @@ import httpx
 from pydantic import BaseModel, Field
 
 from app.config import settings
+from app.services.llm_json import strip_code_fence
+from app.services.llm_retry import post_with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -533,8 +535,9 @@ async def _call_claude_with_json(
 
     async with httpx.AsyncClient(timeout=60.0) as client:
         try:
-            response = await client.post(CLAUDE_ENDPOINT, headers=headers, json=payload)
-            response.raise_for_status()
+            response = await post_with_retry(
+                client, CLAUDE_ENDPOINT, headers=headers, json=payload, log_prefix=log_prefix,
+            )
             data = response.json()
         except httpx.HTTPError:
             logger.exception(f"{log_prefix} Claude API 호출 실패")
@@ -547,7 +550,7 @@ async def _call_claude_with_json(
         return None
 
     try:
-        parsed = json.loads(text)
+        parsed = json.loads(strip_code_fence(text))
     except json.JSONDecodeError:
         logger.error(f"{log_prefix} JSON 파싱 실패: {text[:300]}")
         return None

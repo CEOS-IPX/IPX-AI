@@ -23,6 +23,7 @@ from typing import Optional
 import httpx
 
 from app.config import settings
+from app.services.llm_retry import post_with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -105,8 +106,9 @@ async def generate_hypothetical_abstract(
     }
 
     async with httpx.AsyncClient(timeout=60.0) as client:
-        response = await client.post(CLAUDE_ENDPOINT, headers=headers, json=payload)
-        response.raise_for_status()
+        response = await post_with_retry(
+            client, CLAUDE_ENDPOINT, headers=headers, json=payload, log_prefix="[HyDE]",
+        )
         data = response.json()
 
     try:
