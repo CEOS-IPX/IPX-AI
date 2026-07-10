@@ -111,7 +111,6 @@ class PatentResult(BaseModel):
     features: list[str] = Field(default_factory=list)
     keywords: list[str] = Field(default_factory=list)
     reason: Optional[str] = None
-    relevance: str
     rrf_score: float
     sources: list[str] = Field(default_factory=list)
 
@@ -160,21 +159,6 @@ class CancelResponse(BaseModel):
 # ============================================================
 # 유틸
 # ============================================================
-
-def _to_relevance(rank: int, total: int) -> str:
-    """검색 결과 내 rank를 변리사용 등급으로 변환"""
-    if total <= 0:
-        return "낮음"
-    percentile = rank / total
-    if percentile <= 0.2:
-        return "매우 높음"
-    elif percentile <= 0.5:
-        return "높음"
-    elif percentile <= 0.8:
-        return "보통"
-    else:
-        return "낮음"
-
 
 def _calculate_forced_rrf(fallback_rank: int = FALLBACK_RANK, k: int = RRF_K) -> float:
     """required 특허가 두 소스 모두에 없을 때의 RRF 점수"""
@@ -522,7 +506,6 @@ def _assemble_results(
 
     for m, summary in zip(merged, summaries):
         src = opensearch_sources.get(m.application_number)
-        relevance = _to_relevance(m.rank, total_merged)
 
         result_sources = list(m.sources)
         if m.application_number in required_set and "manual" not in result_sources:
@@ -542,7 +525,6 @@ def _assemble_results(
             features=summary.features if summary else [],
             keywords=summary.keywords if summary else [],
             reason=summary.reason if summary else None,
-            relevance=relevance,
             rrf_score=m.rrf_score,
             sources=result_sources,
         ))
@@ -647,7 +629,6 @@ async def add_manual_patents(request: AddManualRequest) -> SearchResponse:
             features=summary.features if summary else [],
             keywords=summary.keywords if summary else [],
             reason=summary.reason if summary else None,
-            relevance="낮음",
             rrf_score=forced_rrf - (0.00001 * i),
             sources=["manual"],
         ))
@@ -655,11 +636,6 @@ async def add_manual_patents(request: AddManualRequest) -> SearchResponse:
     # ===== 5. 기존 결과 + 새 결과 병합 정렬 =====
     all_results: list[PatentResult] = list(request.existing_results) + new_results
     all_results.sort(key=lambda r: r.rrf_score, reverse=True)
-
-    # relevance 재계산 (최종 순위 기준)
-    total = len(all_results)
-    for new_rank, r in enumerate(all_results, start=1):
-        r.relevance = _to_relevance(new_rank, total)
 
     logger.info(
         f"[AddManual] 완료: 기존 {len(request.existing_results)}건 + "
