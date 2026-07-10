@@ -29,7 +29,7 @@ Boost 구조:
 
 import logging
 import asyncio
-from typing import Optional
+from typing import Optional, List
 
 from opensearchpy import OpenSearch
 from opensearchpy.exceptions import NotFoundError
@@ -50,7 +50,7 @@ class PatentSource(BaseModel):
     application_number: str = Field(description="출원번호")
     title: Optional[str] = Field(default=None, description="발명의 명칭")
     abstract: Optional[str] = Field(default=None, description="초록 (전처리됨)")
-    claims_independent: Optional[str] = Field(default=None, description="독립 청구항 (전처리됨)")
+    claims_independent: List[str] = Field(default_factory=list, description="독립 청구항 (전처리됨)")
     ipc_codes: list[str] = Field(default_factory=list, description="IPC 분류 코드")
     cpc_codes: list[str] = Field(default_factory=list, description="CPC 분류 코드")
     applicant_name: Optional[str] = Field(default=None, description="출원인명")
@@ -243,7 +243,7 @@ class OpenSearchService:
             application_number=application_number,
             title=source_data.get("title"),
             abstract=source_data.get("abstract_clean"),
-            claims_independent=source_data.get("claims_independent"),
+            claims_independent=source_data.get("claims_independent") or [],
             ipc_codes=source_data.get("ipc_codes") or [],
             cpc_codes=source_data.get("cpc_codes") or [],
             applicant_name=source_data.get("applicant_name"),

@@ -218,7 +218,10 @@ def preprocess_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     print("[전처리] 초록/청구항 정제")
 
     df["abstract_clean"] = df["abstract_raw"].apply(clean_text)
-    df["claims_independent"] = df["claims_independent"].apply(clean_text)
+    # df["claims_independent"] = df["claims_independent"].apply(clean_text)
+    df["claims_independent"] = df["claims_independent"].apply(
+        lambda claims: [clean_text(claim) for claim in claims] if isinstance(claims, list) else []
+    )
 
     # 임베딩 원본: "제목. 전처리된 초록"
     df["embedding_text"] = df.apply(

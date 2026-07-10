@@ -58,9 +58,9 @@ class KiprisPatentDetail(BaseModel):
     # 발명 내용
     invention_title: Optional[str] = Field(default=None, description="발명의 명칭")
     abstract: Optional[str] = Field(default=None, description="초록 (전처리됨)")
-    claims_independent: Optional[str] = Field(
-        default=None,
-        description="독립 청구항 (전처리됨, 여러 개일 경우 공백으로 join)"
+    claims_independent: list[str] = Field(
+        default_factory=list,
+        description="독립 청구항 리스트 (전처리됨, BULK 적재와 동일한 'claims_independent' 스키마)"
     )
     ipc_codes: list[str] = Field(default_factory=list, description="IPC 분류 코드 목록")
 
@@ -278,10 +278,8 @@ class KiprisService:
                 all_claims.append(claim_text)
 
         independent_list = extract_independent_from_plain_list(all_claims)
-        # BULK 적재와 동일하게 공백으로 join + 전처리
-        independent_joined = " ".join(independent_list) if independent_list else ""
-        claims_independent = clean_text(independent_joined) if independent_joined else None
-        claims_independent = claims_independent if claims_independent else None
+        # BULK 적재와 동일하게 리스트 형태 유지, 항목별 전처리
+        claims_independent = [clean_text(c) for c in independent_list if c] if independent_list else []
 
         # ===== 출원인 (한글명, 쉼표로 join) =====
         applicant_names: list[str] = []

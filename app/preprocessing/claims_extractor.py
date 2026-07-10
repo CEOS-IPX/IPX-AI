@@ -65,9 +65,15 @@ def _normalize_whitespace(text: str) -> str:
 def _is_dependent_claim(claim_body: str) -> bool:
     """
     종속항인지 판단.
-    "제N항에 있어서" 또는 "제N항 및 제M항에 있어서" 등의 패턴 감지.
+    다음 패턴 감지:
+      - "제N항에 있어서" (일반 형식)
+      - "청구항 N에 있어서" (일부 특허, 특히 국제출원)
+      - "제N항 및 제M항에 있어서" (복수 인용)
     """
-    return bool(re.search(r"제\s*\d+\s*항.*있어서", claim_body[:100]))
+    return bool(re.search(
+        r"(제\s*\d+\s*항|청구항\s*\d+).*있어서",
+        claim_body[:100]
+    ))
 
 
 # ============================================================
@@ -121,15 +127,17 @@ def _remove_claim_prefix(claim_text: str) -> str:
 # ============================================================
 
 # BULK 형식: <claim num="N">...</claim>
-# ()를 통해 캡쳐 그룹 지정
 _BULK_CLAIM_PATTERN = re.compile(
     r'<claim\s+num\s*=\s*"(\d+)"\s*>(.*?)</claim>',
     re.IGNORECASE | re.DOTALL,
 )
 
-# 삭제 청구항 감지: <AmendStatus status="D">
-_AMEND_DELETED_PATTERN = re.compile(
-    r'<AmendStatus\s+status\s*=\s*"D"\s*>',
+# 무효 청구항 감지: <AmendStatus status="D"> (Deleted) 또는 status="G"> (Given up)
+# D: 삭제된 청구항
+# G: 설정등록료 미납으로 포기된 청구항
+# 둘 다 법적 효력이 없으므로 원문 인용에서 제외
+_AMEND_INVALID_PATTERN = re.compile(
+    r'<AmendStatus\s+status\s*=\s*"[DG]"\s*>',
     re.IGNORECASE,
 )
 
@@ -160,8 +168,8 @@ def extract_independent_from_bulk_xml(claim_xml_text: str) -> list[str]:
         number = int(match.group(1))
         inner = match.group(2)
 
-        # 삭제 청구항인지 확인 (본문에 <AmendStatus status="D"> 있으면)
-        if _AMEND_DELETED_PATTERN.search(inner):
+        # 무효 청구항(D 또는 G status) 확인
+        if _AMEND_INVALID_PATTERN.search(inner):
             continue
 
         # HTML 엔티티 처리
@@ -239,6 +247,8 @@ def extract_independent_from_plain_list(claims_list: list[str]) -> list[str]:
         if _is_dependent_claim(body):
             continue
 
+        # 번호를 못 찾으면 경고 로그 후 스킵 (fallback 부여하지 않음)
+        # 원문 인용 정확성을 위해 원본 번호가 확실한 경우만 저장
         if number is None:
             logger.warning(
                 f"[claims_extractor] 청구항 번호 추출 실패, 스킵: {text[:80]}..."
