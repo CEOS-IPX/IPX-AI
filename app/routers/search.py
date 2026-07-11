@@ -103,7 +103,6 @@ class PatentResult(BaseModel):
     applicant_name: Optional[str] = None
     application_date: Optional[str] = None
     registration_date: Optional[str] = None
-    registration_number: Optional[str] = None
     legal_status: Optional[str] = None
     ipc_codes: list[str] = Field(default_factory=list)
     summary: Optional[str] = None
@@ -118,17 +117,12 @@ class PatentResult(BaseModel):
 class AddManualRequest(BaseModel):
     """탐색 후 수동 추가 요청 (Spring → Python)
 
-    Spring이 사전에 다음을 처리한 상태로 요청해야 함:
+    Spring이 다음을 처리한 상태로 요청:
       - cases 테이블에서 context 조회
-      - prior_arts에서 existing_results 조회
       - 중복 특허 필터링 (application_numbers는 기존 결과와 중복 없음)
     """
     application_numbers: list[str] = Field(description="추가할 출원번호 리스트")
     context: SearchContext = Field(description="원본 검색의 사용자 발명 정보")
-    existing_results: list[PatentResult] = Field(
-        default_factory=list,
-        description="기존 검색 결과 (병합 정렬용)"
-    )
 
 
 class SearchDebugInfo(BaseModel):
@@ -150,6 +144,8 @@ class SearchResponse(BaseModel):
     results: list[PatentResult] = Field(default_factory=list)
     debug: Optional[SearchDebugInfo] = None
 
+class AddManualResponse(BaseModel):
+    results: list[PatentResult]
 
 class CancelResponse(BaseModel):
     search_id: str
@@ -517,7 +513,6 @@ def _assemble_results(
             applicant_name=src.applicant_name if src else None,
             application_date=src.application_date if src else None,
             registration_date=src.registration_date if src else None,
-            registration_number=src.registration_number if src else None,
             legal_status=src.legal_status if src else None,
             ipc_codes=src.ipc_codes if src else [],
             summary=summary.summary if summary else None,
@@ -536,50 +531,33 @@ def _assemble_results(
 # 탐색 후 수동 추가 엔드포인트
 # ============================================================
 
-@router.post("/add-manual", response_model=SearchResponse)
-async def add_manual_patents(request: AddManualRequest) -> SearchResponse:
+@router.post("/add-manual", response_model=AddManualResponse)
+async def add_manual_patents(request: AddManualRequest) -> AddManualResponse:
     """
-    탐색 후 특허 수동 추가.
+    탐색 후 특허 수동 추가
 
-    Spring이 사전에 처리해야 할 것:
+    Spring이 사전에 처리:
       - cases에서 context 조회
-      - prior_arts에서 existing_results 조회
-      - 중복 특허 필터링 (application_numbers는 기존 결과와 중복 없음)
+      - prior_arts에서 기존 특허와 중복 필터링
 
     Python 처리:
       1. 자동 적재 확인 (OpenSearch에 없으면 KIPRIS로 가져와 적재)
       2. 서지 정보 조회
       3. LLM 정보 추출 (summary, purpose, features, keywords, reason)
-      4. 새 특허들의 forced_rrf 부여
-      5. 기존 결과 + 새 결과 병합 정렬
-      6. 최종 응답 반환
+      4. 새 PatentResult 반환
     """
-    # ===== 중복 확인 (Spring이 필터링했지만 만약을 대비) =====
-    existing_nums = {r.application_number for r in request.existing_results}
-    duplicates = [num for num in request.application_numbers if num in existing_nums]
-    if duplicates:
-        logger.warning(
-            f"[AddManual] Spring이 필터링하지 못한 중복 발견 (스킵): {duplicates}"
-        )
+    application_numbers = request.application_numbers
 
-    new_numbers = [
-        num for num in request.application_numbers
-        if num not in existing_nums
-    ]
-
-    if not new_numbers:
+    if not application_numbers:
         logger.info("[AddManual] 처리할 새 특허 없음")
-        return SearchResponse(
-            is_valid=True,
-            results=request.existing_results,
-        )
+        return AddManualResponse(results=[])
 
     # ===== 1. 자동 적재 확인 =====
-    await _ensure_required_exists(new_numbers)
+    await _ensure_required_exists(application_numbers)
 
     # ===== 2. 서지 정보 조회 =====
     new_sources: dict[str, PatentSource] = {}
-    for num in new_numbers:
+    for num in application_numbers:
         src = await opensearch_service.get_by_application_number(num)
         if src:
             new_sources[num] = src
@@ -588,10 +566,7 @@ async def add_manual_patents(request: AddManualRequest) -> SearchResponse:
 
     if not new_sources:
         logger.warning("[AddManual] 모든 특허의 서지 정보 조회 실패")
-        return SearchResponse(
-            is_valid=True,
-            results=request.existing_results,
-        )
+        return AddManualResponse(results=[])
 
     # ===== 3. LLM 정보 추출 =====
     patent_data = [
@@ -611,17 +586,18 @@ async def add_manual_patents(request: AddManualRequest) -> SearchResponse:
     )
 
     # ===== 4. 새 PatentResult 조립 =====
+    # 모든 새 특허에 동일한 forced_rrf 부여 (상수)
+    # 순서는 Spring 측에서 created_at ASC로 관리
     forced_rrf = _calculate_forced_rrf()
     new_results: list[PatentResult] = []
 
-    for i, (num, src, summary) in enumerate(zip(new_sources.keys(), new_sources.values(), summaries)):
+    for num, src, summary in zip(new_sources.keys(), new_sources.values(), summaries):
         new_results.append(PatentResult(
             application_number=num,
             title=src.title,
             applicant_name=src.applicant_name,
             application_date=src.application_date,
             registration_date=src.registration_date,
-            registration_number=src.registration_number,
             legal_status=src.legal_status,
             ipc_codes=src.ipc_codes,
             summary=summary.summary if summary else None,
@@ -629,23 +605,13 @@ async def add_manual_patents(request: AddManualRequest) -> SearchResponse:
             features=summary.features if summary else [],
             keywords=summary.keywords if summary else [],
             reason=summary.reason if summary else None,
-            rrf_score=forced_rrf - (0.00001 * i),
+            rrf_score=forced_rrf,
             sources=["manual"],
         ))
 
-    # ===== 5. 기존 결과 + 새 결과 병합 정렬 =====
-    all_results: list[PatentResult] = list(request.existing_results) + new_results
-    all_results.sort(key=lambda r: r.rrf_score, reverse=True)
+    logger.info(f"[AddManual] 완료: 새 특허 {len(new_results)}건 반환")
 
-    logger.info(
-        f"[AddManual] 완료: 기존 {len(request.existing_results)}건 + "
-        f"새 {len(new_results)}건 = 총 {len(all_results)}건"
-    )
-
-    return SearchResponse(
-        is_valid=True,
-        results=all_results,
-    )
+    return AddManualResponse(results=new_results)
 
 
 # ============================================================
