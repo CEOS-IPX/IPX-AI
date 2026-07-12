@@ -5,6 +5,9 @@
 Spring이 사건 정보 + 구성요소 + 상위 3건 선행기술을 전달하면
 Python이 LLM으로 신규성 분석을 수행한다.
 
+엔드포인트:
+  POST /analyze/novelty                   - 신규성 분석
+
 Spring 흐름:
   1. 변리사 UI에서 "신규성 분석" 버튼 클릭
   2. Spring: cases, invention_components 조회

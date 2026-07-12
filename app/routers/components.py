@@ -4,6 +4,9 @@
 ============================================================
 Spring 서버가 "AI 자동 생성" 버튼 클릭 시 호출.
 
+엔드포인트:
+  POST /components/extract                  - 구성요소 자동 추출
+
 Spring 흐름:
   1. 변리사 UI에서 "AI 자동 생성" 버튼 클릭
   2. Spring: cases 테이블에서 title, description, technical_field 조회

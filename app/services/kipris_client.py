@@ -253,10 +253,13 @@ class KiprisService:
             logger.warning("[KIPRIS] biblioSummaryInfo 누락")
             return None
 
-        application_number = self._get_text(biblio, "applicationNumber")
-        if not application_number:
+        raw_app_number = self._get_text(biblio, "applicationNumber")
+        if not raw_app_number:
             logger.warning("[KIPRIS] applicationNumber 누락")
             return None
+
+        # KIPRIS의 응답값인 출원번호 '10-2021-0056789' 형태를 DB 표준인 '1020210056789'로 정규화
+        application_number = self._normalize_application_number(raw_app_number)
 
         # ===== IPC 코드 =====
         ipc_codes: list[str] = []
@@ -298,11 +301,11 @@ class KiprisService:
         inventors = ", ".join(inventor_names) if inventor_names else None
 
         return KiprisPatentDetail(
-            application_date=self._get_text(biblio, "applicationDate"),
+            application_date=self._format_date(self._get_text(biblio, "applicationDate")),
             application_number=application_number,
-            open_date=self._get_text(biblio, "openDate"),
+            open_date=self._format_date(self._get_text(biblio, "openDate")),
             open_number=self._get_text(biblio, "openNumber"),
-            register_date=self._get_text(biblio, "registerDate"),
+            register_date=self._format_date(self._get_text(biblio, "registerDate")),
             register_number=self._get_text(biblio, "registerNumber"),
             register_status=self._get_text(biblio, "registerStatus"),
             invention_title=self._get_text(biblio, "inventionTitle"),
@@ -312,6 +315,27 @@ class KiprisService:
             applicants=applicants,
             inventors=inventors,
         )
+
+    # ============================================================
+    # 날짜 정규화 메서드
+    # ============================================================
+
+    def _format_date(self, date_str: Optional[str]) -> Optional[str]:
+        """
+        KIPRIS 날짜 포맷(예: '2020.02.03' 또는 '20200203')을
+        OpenSearch 및 DB 표준 포맷('2020-02-03')으로 변환합니다.
+        """
+        if not date_str:
+            return None
+
+        # 공백 제거 및 점(.)을 하이픈(-)으로 변경
+        cleaned = date_str.strip().replace(".", "-")
+
+        # 만약 구분자 없이 '20200203' 형태로 들어왔을 경우를 위한 방어 코드
+        if len(cleaned) == 8 and cleaned.isdigit():
+            return f"{cleaned[:4]}-{cleaned[4:6]}-{cleaned[6:]}"
+
+        return cleaned
 
     # ============================================================
     # XML 파싱: 검색 API
