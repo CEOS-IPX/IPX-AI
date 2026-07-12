@@ -36,16 +36,11 @@ from app.services.inventive_step_analyzer import (
     NumericalLimitResult,
     CombinationMotivationResult,
     CommonTechniqueResult,
-    SimpleDesignResult,
+    SimpleDesignResult, select_relevant_categories,
 )
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/analyze/inventive-step", tags=["inventive-step"])
-
-
-# ============================================================
-# 1. 부인용 D2 자동 선정
-# ============================================================
 
 class SelectSecondaryRequest(BaseModel):
     invention_title: str
@@ -58,6 +53,9 @@ class SelectSecondaryRequest(BaseModel):
 class SelectSecondaryResponse(BaseModel):
     d2_application_number: str
 
+# ============================================================
+# 1. 부인용 D2 자동 선정
+# ============================================================
 
 @router.post("/select-secondary", response_model=SelectSecondaryResponse)
 async def select_secondary_endpoint(
@@ -107,14 +105,80 @@ async def select_secondary_endpoint(
 
 
 # ============================================================
-# 2. 수치한정 논리 생성
+# 2. 카테고리 자동 선정
+# ============================================================
+
+class SelectCategoriesRequest(BaseModel):
+    invention_title: str
+    invention_description: str
+    components: list[InventionComponent]
+    primary_art: PriorArtInfo
+    secondary_art: PriorArtInfo
+    prior_art_reference: Optional[str] = None
+    differentiation_notes: Optional[str] = None
+    measurement_conditions: Optional[str] = None
+    measurement_results: Optional[str] = None
+
+
+class SelectCategoriesResponse(BaseModel):
+    categories: list[str] = Field(
+        description="선정된 카테고리 리스트. 각 항목은 다음 중 하나: "
+                    "numerical_limit, combination_motivation, common_technique, simple_design"
+    )
+
+
+@router.post("/select-categories", response_model=SelectCategoriesResponse)
+async def select_categories_endpoint(
+        request: SelectCategoriesRequest,
+) -> SelectCategoriesResponse:
+    """
+    본 발명과 D1, D2를 분석해 4개 진보성 논리 중 이슈가 될 만한 카테고리들 선정.
+
+    가능한 카테고리:
+      - numerical_limit: 수치한정 (측정 데이터가 있고 개선률 명확한 경우)
+      - combination_motivation: 복수인용발명결합 (D1, D2 결합 방향이 상충되는 경우)
+      - common_technique: 주지관용기술 (일부 구성요소가 관용기술로 판단될 위험)
+      - simple_design: 단순설계변경 (D1과 차이가 미묘한 경우)
+
+    Raises:
+        400: 구성요소 없음
+        502: LLM 판단 실패
+    """
+    if not request.components:
+        raise HTTPException(
+            status_code=400,
+            detail="구성요소가 필요합니다.",
+        )
+
+    result = await select_relevant_categories(
+        invention_title=request.invention_title,
+        invention_description=request.invention_description,
+        components=request.components,
+        primary_art=request.primary_art,
+        secondary_art=request.secondary_art,
+        prior_art_reference=request.prior_art_reference,
+        differentiation_notes=request.differentiation_notes,
+        measurement_conditions=request.measurement_conditions,
+        measurement_results=request.measurement_results,
+    )
+
+    if result is None:
+        raise HTTPException(status_code=502, detail="카테고리 선정에 실패했습니다.")
+
+    return SelectCategoriesResponse(
+        categories=result.categories,
+    )
+
+# ============================================================
+# 3. 수치한정 논리 생성
 # ============================================================
 
 class GenerateNumericalLimitRequest(BaseModel):
     invention_title: str
     invention_description: str
     primary_art: PriorArtInfo
-
+    measurement_conditions: Optional[str] = None
+    measurement_results: Optional[str] = None
 
 @router.post("/generate/numerical-limit", response_model=NumericalLimitResult)
 async def generate_numerical_limit_endpoint(
@@ -126,6 +190,8 @@ async def generate_numerical_limit_endpoint(
         invention_title=request.invention_title,
         invention_description=request.invention_description,
         primary_art=request.primary_art,
+        measurement_conditions=request.measurement_conditions,
+        measurement_results=request.measurement_results,
     )
 
     if result is None:
@@ -143,6 +209,8 @@ class GenerateCombinationMotivationRequest(BaseModel):
     invention_description: str
     primary_art: PriorArtInfo
     secondary_art: PriorArtInfo
+    prior_art_reference: Optional[str] = None
+    differentiation_notes: Optional[str] = None
 
 
 @router.post("/generate/combination-motivation", response_model=CombinationMotivationResult)
@@ -156,6 +224,8 @@ async def generate_combination_motivation_endpoint(
         invention_description=request.invention_description,
         primary_art=request.primary_art,
         secondary_art=request.secondary_art,
+        prior_art_reference=request.prior_art_reference,
+        differentiation_notes=request.differentiation_notes,
     )
 
     if result is None:
@@ -173,6 +243,8 @@ class GenerateCommonTechniqueRequest(BaseModel):
     invention_description: str
     components: list[InventionComponent]
     primary_art: PriorArtInfo
+    prior_art_reference: Optional[str] = None
+    differentiation_notes: Optional[str] = None
 
 
 @router.post("/generate/common-technique", response_model=CommonTechniqueResult)
@@ -189,6 +261,8 @@ async def generate_common_technique_endpoint(
         invention_description=request.invention_description,
         components=request.components,
         primary_art=request.primary_art,
+        prior_art_reference=request.prior_art_reference,
+        differentiation_notes=request.differentiation_notes,
     )
 
     if result is None:
@@ -206,6 +280,8 @@ class GenerateSimpleDesignRequest(BaseModel):
     invention_description: str
     components: list[InventionComponent]
     primary_art: PriorArtInfo
+    prior_art_reference: Optional[str] = None
+    differentiation_notes: Optional[str] = None
 
 
 @router.post("/generate/simple-design", response_model=SimpleDesignResult)
@@ -222,6 +298,8 @@ async def generate_simple_design_endpoint(
         invention_description=request.invention_description,
         components=request.components,
         primary_art=request.primary_art,
+        prior_art_reference=request.prior_art_reference,
+        differentiation_notes=request.differentiation_notes,
     )
 
     if result is None:

@@ -35,7 +35,7 @@ CLAUDE_ENDPOINT = "https://api.anthropic.com/v1/messages"
 class Component(BaseModel):
     """청구항 구성요소 1개"""
     name: str = Field(description="구성요소 명칭 (20자 이내 명사구)")
-    description: str = Field(description="구성요소 상세 설명 (50~150자)")
+    description: str = Field(description="구성요소 상세 설명 (50~100자)")
 
 
 # ============================================================
@@ -68,7 +68,7 @@ SYSTEM_PROMPT = """\
         구성요소의 역할을 함축적으로 표현.
         예: "저온 침출 반응기", "황산 농도 제어부", "환원제 투입 수단"
 
-- description: 50~150자.
+- description: 50~100자.
                 이 구성요소가 무엇을 하는지, 어떤 조건에서 동작하는지, 어떤 구성인지 구체적으로.
                 발명 설명의 수치, 화학식, 조건 등을 가능한 한 보존.
 
