@@ -492,7 +492,8 @@ async def generate_combination_motivation(
 # ============================================================
 
 class CommonTechniqueResult(BaseModel):
-    target_component: str = Field(description="주지관용기술로 지목되는 구성요소 라벨 (A/B/C/...)")
+    target_label: str = Field(description="주지관용기술로 지목되는 구성요소 라벨 (A/B/C/...)")
+    target_name: str = Field(description="주지관용기술로 지목되는 구성요소 이름")
     rebuttal: str = Field(description="반박 논리 (150~250자)")
 
 
@@ -504,12 +505,12 @@ COMMON_TECHNIQUE_SYSTEM_PROMPT = """\
 출력 규칙:
 1. JSON 형식만 출력. 마크다운, 코드 블록, 설명 텍스트 금지.
 2. 한국어로 작성.
-3. target_component는 사용자 구성요소 중 가장 반박이 필요한 하나의 라벨.
+3. target_label과 targe_name은 각각 사용자 구성요소 중 가장 반박이 필요한 하나의 라벨과 그 이름.
 4. rebuttal은 150~250자.
 5. 사용자가 [사용자가 언급한 선행기술 대비 차별점] 섹션을 제공한 경우,
    해당 내용을 반박 논거로 활용하세요.
 
-target_component 선정 기준:
+target_label 선정 기준:
 - D1에 개시되지 않은 구성요소 중 하나
 - 심사관이 "이건 이 기술 분야에서 흔한 기술"이라 판단할 가능성이 있는 것
 
@@ -524,7 +525,8 @@ rebuttal 작성 가이드:
 
 출력 형식:
 {
-  "target_component": "B",
+  "target_label": "B",
+  "target_name": "...",
   "rebuttal": "..."
 }
 
@@ -597,7 +599,8 @@ async def generate_common_technique(
 # ============================================================
 
 class SimpleDesignResult(BaseModel):
-    changed_component: str = Field(description="변경된 구성요소 라벨 (A/B/C/...)")
+    changed_component_label: str = Field(description="변경된 구성요소 라벨 (A/B/C/...)")
+    changed_component_name: str = Field(description="변경된 구성요소 이름")
     non_obviousness: str = Field(description="단순 설계 변경이 아니라는 논리 (150~250자)")
 
 
@@ -609,12 +612,12 @@ SIMPLE_DESIGN_SYSTEM_PROMPT = """\
 출력 규칙:
 1. JSON 형식만 출력. 마크다운, 코드 블록, 설명 텍스트 금지.
 2. 한국어로 작성.
-3. changed_component는 사용자 구성요소 중 가장 반박이 필요한 하나의 라벨.
+3. changed_component_label과 changed_component_name은 각각 사용자 구성요소 중 가장 반박이 필요한 하나의 라벨과 그 이름.
 4. non_obviousness는 150~250자.
 5. 사용자가 [사용자가 언급한 선행기술 대비 차별점] 섹션을 제공한 경우,
    해당 내용을 비자명성 논거로 활용하세요.
 
-changed_component 선정 기준:
+changed_component_label 선정 기준:
 - D1과의 차이점이 있는 구성요소 중 하나
 - 심사관이 "이건 D1을 조금만 바꾼 것"이라 판단할 가능성이 있는 것
 
@@ -629,7 +632,8 @@ non_obviousness 작성 가이드:
 
 출력 형식:
 {
-  "changed_component": "C",
+  "changed_component_label": "C",
+  "changed_component_name": "...",
   "non_obviousness": "..."
 }
 
