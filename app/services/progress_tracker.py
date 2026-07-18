@@ -3,16 +3,12 @@
 검색 진행률 추적 서비스 (Redis 기반)
 ============================================================
 Redis 키 구조:
-  search:{search_id}                → 진행 상태 (Hash)
-    - status: pending/in_progress/completed/cancelled/failed
+  search:{case_id}                → 진행 상태 (Hash)
+    - status: pending/in_progress/completed/cancelled/invalid_input/no_results/failed
     - step: 현재 단계 설명
     - progress: 진행률 (0~100)
     - started_at, updated_at
     - error (failed 시)
-  search:{search_id}:cancelled      → 중단 신호
-  search:{search_id}:result         → 완료된 검색 결과 JSON
-  search:{search_id}:context        → 원본 검색 컨텍스트 JSON
-                                       (탐색 후 수동 추가 지원용)
 
 TTL: 1시간
 ============================================================
@@ -30,15 +26,8 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 
-def _progress_key(search_id: str) -> str:
-    return f"search:{search_id}"
-
-def _cancel_key(search_id: str) -> str:
-    return f"search:{search_id}:cancelled"
-
-def _context_key(search_id: str) -> str:
-    return f"search:{search_id}:context"
-
+def _progress_key(case_id: str) -> str:
+    return f"search:{case_id}"
 
 TTL_SECONDS = 3600
 
@@ -69,145 +58,118 @@ class ProgressTracker:
     # 검색 시작
     # ============================================================
 
-    async def start(self, search_id: str) -> None:
+    async def start(self, case_id: str) -> None:
         now = datetime.now(UTC).isoformat()
         await self.client.hset(
-            _progress_key(search_id),
+            _progress_key(case_id),
             mapping={
                 "status": "in_progress",
                 "step": "검색 준비 중",
                 "progress": "0",
                 "started_at": now,
                 "updated_at": now,
+                "reason_invalid": "",
+                "error": "",
             },
         )
-        await self.client.expire(_progress_key(search_id), TTL_SECONDS)
-        logger.info(f"[Progress] 검색 시작: {search_id}")
+        await self.client.expire(_progress_key(case_id), TTL_SECONDS)
+        logger.info(f"[Progress] 검색 시작: {case_id}")
 
     # ============================================================
     # 진행률 업데이트
     # ============================================================
 
-    async def update(self, search_id: str, step: str, progress: int) -> None:
+    async def update(self, case_id: str, step: str, progress: int) -> None:
         await self.client.hset(
-            _progress_key(search_id),
+            _progress_key(case_id),
             mapping={
                 "step": step,
                 "progress": str(progress),
                 "updated_at": datetime.now(UTC).isoformat(),
             },
         )
-        logger.debug(f"[Progress] {search_id}: {step} ({progress}%)")
+        logger.debug(f"[Progress] {case_id}: {step} ({progress}%)")
 
     # ============================================================
     # 중단 확인
     # ============================================================
 
-    async def check_cancelled(self, search_id: str) -> None:
-        if await self.client.exists(_cancel_key(search_id)):
-            await self.client.hset(
-                _progress_key(search_id),
-                mapping={
-                    "status": "cancelled",
-                    "updated_at": datetime.now(UTC).isoformat(),
-                },
+    async def check_cancelled(self, case_id: str) -> None:
+        """
+        현재 Redis 상태를 조회하여 cancelled면 예외 발생
+        각 파이프라인 단계 시작 전에 호출한다
+
+        - Redis 조회 실패 시: 로그만 남기고 진행 (다음 체크포인트에서 재확인)
+        - 세션 없음 (None): 로그만 남기고 진행
+        - cancelled 감지: SearchCancelledException 발생
+        - 그 외 상태: 정상 진행
+        """
+        try:
+            status = await self.client.hget(_progress_key(case_id), "status")
+        except Exception as e:
+            logger.warning(
+                f"[Progress] check_cancelled Redis 조회 실패 (스킵): "
+                f"case_id={case_id}, error={e}"
             )
-            logger.info(f"[Progress] 검색 중단: {search_id}")
-            raise SearchCancelledException(f"Search {search_id} cancelled by user")
+            return
+
+        if status is None:
+            logger.warning(f"[Progress] 세션 없음 (스킵): case_id={case_id}")
+            return
+
+        if status == "cancelled":
+            logger.info(f"[Progress] 취소 감지: case_id={case_id}")
+            raise SearchCancelledException(
+                f"Search {case_id} was cancelled by user"
+            )
 
     # ============================================================
-    # 중단 요청
+    # 예외 상황
     # ============================================================
 
-    async def cancel(self, search_id: str) -> bool:
-        status = await self.client.hget(_progress_key(search_id), "status")
-        if status not in ("in_progress", "pending"):
-            logger.warning(f"[Progress] 중단 불가 (상태={status}): {search_id}")
-            return False
-
-        await self.client.set(_cancel_key(search_id), "1", ex=300)
-        logger.info(f"[Progress] 중단 요청: {search_id}")
-        return True
-
-    # ============================================================
-    # 완료 처리
-    # ============================================================
-
-    async def mark_completed(self, search_id: str) -> None:
+    async def mark_invalid_input(self, case_id: str, reason: str) -> None:
+        """사용자 입력이 부적절한 경우"""
         await self.client.hset(
-            _progress_key(search_id),
+            _progress_key(case_id),
             mapping={
-                "status": "completed",
-                "step": "완료",
+                "status": "invalid_input",
+                "step": "사용자 입력 부적절 (의도 해석 실패)",
+                "progress": "5",
+                "updated_at": datetime.now(UTC).isoformat(),
+                "reason_invalid": reason,
+            },
+        )
+        logger.info(f"[Progress] 의도 해석 실패: {case_id}")
+
+    async def mark_no_results(self, case_id: str) -> None:
+        """정상 완료했으나 결과 0건"""
+        await self.client.hset(
+            _progress_key(case_id),
+            mapping={
+                "status": "no_results",
+                "step": "정상 완료 (결과 0건)",
                 "progress": "100",
                 "updated_at": datetime.now(UTC).isoformat(),
             },
         )
-        logger.info(f"[Progress] 검색 완료: {search_id}")
+        logger.info(f"[Progress] 정상 완료 (결과 0건): {case_id}")
 
     # ============================================================
     # 실패 처리
     # ============================================================
 
-    async def mark_failed(self, search_id: str, error: str) -> None:
+    async def mark_failed(self, case_id: str, error: str) -> None:
+        """시스템 오류"""
         await self.client.hset(
-            _progress_key(search_id),
+            _progress_key(case_id),
             mapping={
                 "status": "failed",
                 "step": "실패",
-                "error": error,
                 "updated_at": datetime.now(UTC).isoformat(),
+                "error": error,
             },
         )
-        logger.warning(f"[Progress] 검색 실패: {search_id} - {error}")
-
-    # ============================================================
-    # 검색 컨텍스트 저장/조회 (탐색 후 수동 추가용)
-    # ============================================================
-
-    async def save_context(self, search_id: str, context: dict) -> None:
-        """
-        원본 검색 컨텍스트 저장.
-        탐색 후 수동 추가 시 사용자 발명 정보를 재사용하기 위함.
-
-        context 예시:
-          {
-            "title": "...",
-            "description": "...",
-            "technical_field": "...",
-            "user_keywords": [...]   # LLM 추출 원본
-          }
-        """
-        await self.client.set(
-            _context_key(search_id),
-            json.dumps(context, ensure_ascii=False),
-            ex=TTL_SECONDS,
-        )
-
-    async def get_context(self, search_id: str) -> Optional[dict]:
-        """저장된 검색 컨텍스트 조회"""
-        data = await self.client.get(_context_key(search_id))
-        if not data:
-            return None
-        return json.loads(data)
-
-    # ============================================================
-    # 상태/결과 조회
-    # ============================================================
-
-    async def get_status(self, search_id: str) -> Optional[dict]:
-        data = await self.client.hgetall(_progress_key(search_id))
-        if not data:
-            return None
-        return {
-            "search_id": search_id,
-            "status": data.get("status"),
-            "step": data.get("step"),
-            "progress": int(data.get("progress", "0")),
-            "started_at": data.get("started_at"),
-            "updated_at": data.get("updated_at"),
-            "error": data.get("error"),
-        }
+        logger.warning(f"[Progress] 검색 실패: {case_id} - {error}")
 
     # ============================================================
     # 리소스 정리

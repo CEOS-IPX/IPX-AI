@@ -76,7 +76,7 @@ BUFFER_SIZE = 10
 class SearchRequest(BaseModel):
     """Spring → Python 검색 요청 (탐색)"""
 
-    search_id: str = Field(description="Spring이 생성한 작업 ID")
+    case_id: str = Field(description="Spring이 생성한 사건 ID")
     title: str = Field(description="발명의 명칭")
     description: str = Field(description="발명의 핵심 기술 설명")
     technical_field: Optional[str] = Field(default=None, description="기술 분야")
@@ -136,7 +136,7 @@ class SearchDebugInfo(BaseModel):
 
 
 class SearchResponse(BaseModel):
-    search_id: Optional[str] = None    # add-manual 응답에선 없을 수 있음
+    case_id: Optional[str] = None
     is_valid: bool
     reason_invalid: Optional[str] = None
     intent: Optional[IntentResult] = None
@@ -145,10 +145,6 @@ class SearchResponse(BaseModel):
 
 class AddManualResponse(BaseModel):
     results: list[PatentResult]
-
-class CancelResponse(BaseModel):
-    search_id: str
-    cancelled: bool
 
 
 # ============================================================
@@ -169,31 +165,31 @@ async def search(request: SearchRequest) -> SearchResponse:
     """검색 파이프라인 진입점"""
 
     logger.info(
-        f"[검색 요청] search_id={request.search_id}, title='{request.title}', "
+        f"[검색 요청] case_id={request.case_id}, title='{request.title}', "
         f"required={request.required_application_numbers}, "
         f"result_count={request.result_count}"
     )
 
-    await progress_tracker.start(request.search_id)
+    await progress_tracker.start(request.case_id)
 
     try:
         return await _execute_search(request)
 
     except SearchCancelledException:
-        logger.info(f"[검색] 중단 처리 완료: {request.search_id}")
+        logger.info(f"[검색] 중단 처리 완료: {request.case_id}")
         return SearchResponse(
-            search_id=request.search_id,
+            case_id=request.case_id,
             is_valid=False,
             reason_invalid="검색이 사용자에 의해 중단되었습니다.",
         )
 
     except HTTPException:
-        await progress_tracker.mark_failed(request.search_id, "검색 중 오류 발생")
+        await progress_tracker.mark_failed(request.case_id, "검색 중 오류 발생")
         raise
 
     except Exception as e:
-        logger.exception(f"[검색] 예상치 못한 오류: {request.search_id}")
-        await progress_tracker.mark_failed(request.search_id, str(e))
+        logger.exception(f"[검색] 예상치 못한 오류: {request.case_id}")
+        await progress_tracker.mark_failed(request.case_id, str(e))
         raise HTTPException(status_code=500, detail="검색 중 오류가 발생했습니다.")
 
 
@@ -202,13 +198,13 @@ async def _execute_search(request: SearchRequest) -> SearchResponse:
 
     # ===== Step 0: required 특허 사전 확인 + 자동 적재 (3%) =====
     if request.required_application_numbers:
-        await progress_tracker.check_cancelled(request.search_id)
-        await progress_tracker.update(request.search_id, "지정된 특허 확인 중", 3)
+        await progress_tracker.check_cancelled(request.case_id)
+        await progress_tracker.update(request.case_id, "지정된 특허 확인 중", 3)
         await _ensure_required_exists(request.required_application_numbers)
 
     # ===== Step 1: LLM 의도 해석 (5%) =====
-    await progress_tracker.check_cancelled(request.search_id)
-    await progress_tracker.update(request.search_id, "검색 의도 분석 중", 5)
+    await progress_tracker.check_cancelled(request.case_id)
+    await progress_tracker.update(request.case_id, "검색 의도 분석 중", 5)
 
     try:
         intent = await interpret_intent(
@@ -221,18 +217,12 @@ async def _execute_search(request: SearchRequest) -> SearchResponse:
         raise HTTPException(status_code=502, detail="검색 의도 해석에 실패했습니다.")
 
     if not intent.is_valid:
-        await progress_tracker.mark_completed(
-            request.search_id,
-            {
-                "search_id": request.search_id,
-                "is_valid": False,
-                "reason_invalid": intent.reason_invalid,
-                "intent": intent.model_dump(),
-                "results": [],
-            },
+        await progress_tracker.mark_invalid_input(
+            request.case_id,
+            reason=intent.reason_invalid
         )
         return SearchResponse(
-            search_id=request.search_id,
+            case_id=request.case_id,
             is_valid=False,
             reason_invalid=intent.reason_invalid,
             intent=intent,
@@ -241,14 +231,14 @@ async def _execute_search(request: SearchRequest) -> SearchResponse:
     logger.info(f"[의도 해석 완료] keywords={intent.keywords}, ipc={intent.ipc_codes}")
 
     # ===== Step 2: 동의어 확장 (7%) =====
-    await progress_tracker.check_cancelled(request.search_id)
-    await progress_tracker.update(request.search_id, "키워드 확장 중", 7)
+    await progress_tracker.check_cancelled(request.case_id)
+    await progress_tracker.update(request.case_id, "키워드 확장 중", 7)
     expanded_keywords = synonym_expander.expand(intent.keywords)
     logger.info(f"[동의어 확장] {len(intent.keywords)}개 → {len(expanded_keywords)}개")
 
     # ===== Step 3: IPC 통합 (10%) =====
-    await progress_tracker.check_cancelled(request.search_id)
-    await progress_tracker.update(request.search_id, "분류 코드 정리 중", 10)
+    await progress_tracker.check_cancelled(request.case_id)
+    await progress_tracker.update(request.case_id, "분류 코드 정리 중", 10)
     trusted_ipc = request.user_input_ipc or []
     estimated_ipc = [
         ipc for ipc in (intent.ipc_codes or [])
@@ -256,8 +246,8 @@ async def _execute_search(request: SearchRequest) -> SearchResponse:
     ]
 
     # ===== Step 4: HyDE 가상 초록 (25%) =====
-    await progress_tracker.check_cancelled(request.search_id)
-    await progress_tracker.update(request.search_id, "유사 특허 모델 구성 중", 25)
+    await progress_tracker.check_cancelled(request.case_id)
+    await progress_tracker.update(request.case_id, "유사 특허 모델 구성 중", 25)
 
     try:
         hypothetical_abstract = await generate_hypothetical_abstract(
@@ -272,8 +262,8 @@ async def _execute_search(request: SearchRequest) -> SearchResponse:
         raise HTTPException(status_code=502, detail="가상 초록 생성 실패")
 
     # ===== Step 5: 임베딩 (30%) =====
-    await progress_tracker.check_cancelled(request.search_id)
-    await progress_tracker.update(request.search_id, "의미 벡터 생성 중", 30)
+    await progress_tracker.check_cancelled(request.case_id)
+    await progress_tracker.update(request.case_id, "의미 벡터 생성 중", 30)
 
     try:
         query_vector = embedding_service.embed(hypothetical_abstract)
@@ -282,8 +272,8 @@ async def _execute_search(request: SearchRequest) -> SearchResponse:
         raise HTTPException(status_code=500, detail="임베딩 생성 실패")
 
     # ===== Step 6: 병렬 검색 (50%) =====
-    await progress_tracker.check_cancelled(request.search_id)
-    await progress_tracker.update(request.search_id, "특허 데이터베이스 검색 중", 50)
+    await progress_tracker.check_cancelled(request.case_id)
+    await progress_tracker.update(request.case_id, "특허 데이터베이스 검색 중", 50)
 
     candidate_size = max(request.result_count * 3, 30)
 
@@ -308,8 +298,8 @@ async def _execute_search(request: SearchRequest) -> SearchResponse:
     )
 
     # ===== Step 7: RRF 병합 (55%) =====
-    await progress_tracker.check_cancelled(request.search_id)
-    await progress_tracker.update(request.search_id, "검색 결과 통합 순위 계산 중", 55)
+    await progress_tracker.check_cancelled(request.case_id)
+    await progress_tracker.update(request.case_id, "검색 결과 통합 순위 계산 중", 55)
 
     required = request.required_application_numbers
     buffer_top_n = request.result_count + len(required) + BUFFER_SIZE
@@ -321,8 +311,8 @@ async def _execute_search(request: SearchRequest) -> SearchResponse:
     )
 
     # ===== Step 7.5: 정확한 개수 확보 (58%) =====
-    await progress_tracker.check_cancelled(request.search_id)
-    await progress_tracker.update(request.search_id, "결과 개수 정리 중", 58)
+    await progress_tracker.check_cancelled(request.case_id)
+    await progress_tracker.update(request.case_id, "결과 개수 정리 중", 58)
 
     if required:
         merged = _apply_required_with_exact_count(
@@ -336,7 +326,7 @@ async def _execute_search(request: SearchRequest) -> SearchResponse:
     if not merged:
         logger.warning("[검색] 병합 결과 없음")
         empty_response = SearchResponse(
-            search_id=request.search_id,
+            case_id=request.case_id,
             is_valid=True,
             intent=intent,
             results=[],
@@ -351,12 +341,12 @@ async def _execute_search(request: SearchRequest) -> SearchResponse:
                 merged_unique=0,
             ),
         )
-        await progress_tracker.mark_completed(request.search_id)
+        await progress_tracker.mark_no_results(request.case_id)
         return empty_response
 
     # ===== Step 8: 본문 데이터 준비 (60%) =====
-    await progress_tracker.check_cancelled(request.search_id)
-    await progress_tracker.update(request.search_id, "검색 결과 정리 중", 60)
+    await progress_tracker.check_cancelled(request.case_id)
+    await progress_tracker.update(request.case_id, "검색 결과 정리 중", 60)
 
     missing_sources = [
         m.application_number for m in merged
@@ -377,8 +367,8 @@ async def _execute_search(request: SearchRequest) -> SearchResponse:
         })
 
     # ===== Step 9: 병렬 LLM 추출 (95%) =====
-    await progress_tracker.check_cancelled(request.search_id)
-    await progress_tracker.update(request.search_id, "각 특허의 핵심 정보 추출 중", 95)
+    await progress_tracker.check_cancelled(request.case_id)
+    await progress_tracker.update(request.case_id, "각 특허의 핵심 정보 추출 중", 95)
 
     summaries: list[Optional[PatentSummary]] = await summarize_batch(
         patent_data=patent_data_for_summary,
@@ -388,8 +378,8 @@ async def _execute_search(request: SearchRequest) -> SearchResponse:
     )
 
     # ===== Step 10: 응답 조립 (100%) =====
-    await progress_tracker.check_cancelled(request.search_id)
-    await progress_tracker.update(request.search_id, "최종 결과 준비 중", 99)
+    await progress_tracker.check_cancelled(request.case_id)
+    await progress_tracker.update(request.case_id, "최종 결과 준비 중", 99)
 
     results = _assemble_results(
         merged=merged,
@@ -399,7 +389,7 @@ async def _execute_search(request: SearchRequest) -> SearchResponse:
     )
 
     response = SearchResponse(
-        search_id=request.search_id,
+        case_id=request.case_id,
         is_valid=True,
         intent=intent,
         results=results,
@@ -415,7 +405,6 @@ async def _execute_search(request: SearchRequest) -> SearchResponse:
         ),
     )
 
-    await progress_tracker.mark_completed(request.search_id)
     return response
 
 
@@ -611,23 +600,3 @@ async def add_manual_patents(request: AddManualRequest) -> AddManualResponse:
     logger.info(f"[AddManual] 완료: 새 특허 {len(new_results)}건 반환")
 
     return AddManualResponse(results=new_results)
-
-
-# ============================================================
-# 중단/상태/결과 조회
-# ============================================================
-
-@router.post("/{search_id}/cancel", response_model=CancelResponse)
-async def cancel_search(search_id: str) -> CancelResponse:
-    """진행 중인 검색 중단 요청"""
-    success = await progress_tracker.cancel(search_id)
-    return CancelResponse(search_id=search_id, cancelled=success)
-
-
-@router.get("/{search_id}/status")
-async def get_search_status(search_id: str) -> dict:
-    """검색 진행 상태 조회"""
-    status = await progress_tracker.get_status(search_id)
-    if status is None:
-        raise HTTPException(status_code=404, detail="존재하지 않는 검색입니다.")
-    return status
