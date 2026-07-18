@@ -164,7 +164,7 @@ class ProgressTracker:
             _progress_key(case_id),
             mapping={
                 "status": "failed",
-                "step": "실패",
+                "step": "시스템 오류",
                 "updated_at": datetime.now(UTC).isoformat(),
                 "error": error,
             },
