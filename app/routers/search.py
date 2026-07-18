@@ -199,7 +199,7 @@ async def _execute_search(request: SearchRequest) -> SearchResponse:
     # ===== Step 0: required 특허 사전 확인 + 자동 적재 (3%) =====
     if request.required_application_numbers:
         await progress_tracker.check_cancelled(request.case_id)
-        await progress_tracker.update(request.case_id, "지정된 특허 확인 중", 3)
+        await progress_tracker.update(request.case_id, "필수 조회 특허 확인 중", 3)
         await _ensure_required_exists(request.required_application_numbers)
 
     # ===== Step 1: LLM 의도 해석 (5%) =====
@@ -238,7 +238,7 @@ async def _execute_search(request: SearchRequest) -> SearchResponse:
 
     # ===== Step 3: IPC 통합 (10%) =====
     await progress_tracker.check_cancelled(request.case_id)
-    await progress_tracker.update(request.case_id, "분류 코드 정리 중", 10)
+    await progress_tracker.update(request.case_id, "IPC 분류 코드 정리 중", 10)
     trusted_ipc = request.user_input_ipc or []
     estimated_ipc = [
         ipc for ipc in (intent.ipc_codes or [])
@@ -346,7 +346,7 @@ async def _execute_search(request: SearchRequest) -> SearchResponse:
 
     # ===== Step 8: 본문 데이터 준비 (60%) =====
     await progress_tracker.check_cancelled(request.case_id)
-    await progress_tracker.update(request.case_id, "검색 결과 정리 중", 60)
+    await progress_tracker.update(request.case_id, "검색 결과 데이터 조회 중", 60)
 
     missing_sources = [
         m.application_number for m in merged
@@ -368,7 +368,7 @@ async def _execute_search(request: SearchRequest) -> SearchResponse:
 
     # ===== Step 9: 병렬 LLM 추출 (95%) =====
     await progress_tracker.check_cancelled(request.case_id)
-    await progress_tracker.update(request.case_id, "각 특허의 핵심 정보 추출 중", 95)
+    await progress_tracker.update(request.case_id, "각 특허의 부가 정보 추출 중", 95)
 
     summaries: list[Optional[PatentSummary]] = await summarize_batch(
         patent_data=patent_data_for_summary,
