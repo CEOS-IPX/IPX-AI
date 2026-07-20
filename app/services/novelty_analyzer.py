@@ -75,7 +75,7 @@ class ComponentComparison(BaseModel):
 class PatentAnalysisResult(BaseModel):
     """특허 1건에 대한 분석 결과"""
     application_number: str
-    overall_similarity: str = Field(description="'매우 높음' | '높음' | '보통' | '낮음'")
+    overall_similarity: str = Field(description="'매우 높음' | '높음' | '보통' | '낮음' | '매우 낮음'")
     conclusion_text: str = Field(description="신규성 판단 결론 문구")
     component_results: list[ComponentComparison]
 
@@ -106,10 +106,11 @@ overall_similarity 판단 기준:
 - 높음: "동일"이 절반 이상
 - 보통: "동일"과 "유사"가 섞여있음
 - 낮음: "신규"가 절반 이상
+- 매우 낮음: 대부분(80% 이상) "신규"
 
 출력 형식:
 {
-  "overall_similarity": "매우 높음|높음|보통|낮음",
+  "overall_similarity": "매우 높음|높음|보통|낮음|매우 낮음",
   "conclusion_text": "...",
   "component_results": [
     {
