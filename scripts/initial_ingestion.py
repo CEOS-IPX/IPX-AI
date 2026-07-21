@@ -1,6 +1,6 @@
 """
 ============================================================
-KIPRIS BULK 초기 적재 파이프라인 (Google Colab용)
+KIPRIS BULK 초기 적재 파이프라인 (로컬용)
 Colab은 내 로컬 컴퓨터(127.0.0.1) 보지 못하는 관계로 Python 스크립트로 실행 (FastAPI 서버 필요 X)
 ============================================================
 실행 순서
@@ -22,6 +22,7 @@ import unicodedata
 import pandas as pd
 from datetime import datetime, date
 from pathlib import Path
+import os
 
 from app.preprocessing import (
     clean_text,
@@ -34,15 +35,17 @@ BULK_DIR = "./data/bulk/TXT"        # 압축 해제된 TXT 폴더 경로
 DELIMITER = "¶"                             # KIPRIS BULK 반환 .txt 파일 구분자
 ENCODING = "utf-8"                          # 인코딩
 
-POSTGRES_HOST = "localhost"         # Python 스크립트로 실행하므로 로컬 호스트 가능
-POSTGRES_PORT = 5432
-POSTGRES_DB = "patent_db"
-POSTGRES_USER = "ipx_patent_user"
-POSTGRES_PASSWORD = "ipx_patent_password"
+# PostgreSQL / pgvector 설정 (도커 환경변수 우선 적용)
+POSTGRES_HOST = os.getenv("POSTGRES_HOST", "postgres")   # 로컬 실행 시, localhost로 변경
+POSTGRES_PORT = int(os.getenv("POSTGRES_PORT", 5432))
+POSTGRES_DB = os.getenv("POSTGRES_DB", "patent_db")
+POSTGRES_USER = os.getenv("POSTGRES_USER", "ipx_patent_user")
+POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "ipx_patent_password")
 
-OPENSEARCH_HOST = "localhost"       # Python 스크립트로 실행하므로
-OPENSEARCH_PORT = 9200
-OPENSEARCH_INDEX = "patents"
+# OpenSearch 설정 (도커 환경변수 우선 적용)
+OPENSEARCH_HOST = os.getenv("OPENSEARCH_HOST", "opensearch")    # 로컬 실행 시, localhost로 변경
+OPENSEARCH_PORT = int(os.getenv("OPENSEARCH_PORT", 9200))
+OPENSEARCH_INDEX = os.getenv("OPENSEARCH_INDEX", "patents")
 
 BATCH_SIZE = 100                            # 임베딩 배치 크기
 
