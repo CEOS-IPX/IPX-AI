@@ -33,22 +33,29 @@ from scripts.initial_ingestion import (
     insert_sync_history,
 )
 
-
 def load_checkpoint_safely(checkpoint_path: str) -> pd.DataFrame:
-    """JSON 로드 시 출원번호/등록번호/공개번호의 앞자리 '0' 유실 및 타입 변형 방지"""
+    """JSON 로드 시 출원번호/등록번호/공개번호의 앞자리 '0' 유실 및 타입 변형 방지 및 유효하지 않은 날짜(예: 1991-09-31) 정제"""
     # dtype=False를 부여하여 판다스의 자동 타입 추론 억제
     df = pd.read_json(checkpoint_path, orient="records", dtype=False)
 
-    # 번호 관련 컬럼들을 순수 문자열 형태(str)로 강제 정형화
+    # 1. 번호 관련 컬럼들을 순수 문자열 형태(str)로 강제 정형화
     str_cols = ["application_number", "registration_number", "open_number"]
     for col in str_cols:
         if col in df.columns:
             df[col] = df[col].astype(str).str.replace(r"\.0$", "", regex=True)
             df[col] = df[col].apply(lambda x: "" if x in ["None", "nan", "NoneType"] else x)
 
+    # 2. [추가] 날짜 컬럼 유효성 검증 (잘못된 날짜는 OpenSearch 인덱싱 에러 방지를 위해 None 처리)
+    date_cols = ["application_date", "open_date", "registration_date"]
+    for col in date_cols:
+        if col in df.columns:
+            # errors='coerce'로 비유효한 날짜를 NaT로 변환 후 YYYY-MM-DD 문자열로 재포맷팅
+            df[col] = pd.to_datetime(df[col], errors="coerce").dt.strftime("%Y-%m-%d")
+            # NaT/NaN 값을 Python None으로 치환하여 OpenSearch/pgvector에 null로 적재되도록 함
+            df[col] = df[col].where(pd.notnull(df[col]), None)
+
     print(f"[Load] {len(df)}건 로드 및 데이터 타입 검증 완료")
     return df
-
 
 def main(checkpoint_path: str):
     """Checkpoint 파일로 OpenSearch + pgvector에 적재."""
