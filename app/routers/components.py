@@ -24,7 +24,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from app.services.component_extractor import extract_components, Component
+from app.services.component_extractor import extract_components, Component, InvalidInventionError
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/components", tags=["components"])
@@ -82,7 +82,17 @@ async def extract(request: ComponentExtractRequest) -> ComponentExtractResponse:
             description=request.description,
             technical_field=request.technical_field,
         )
+    except InvalidInventionError as e:
+        # 사용자 입력 부적절 (특허 대상 아님)
+        logger.warning(f"[Components] Invalid 발명: {e.reason}")
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "INVALID_INVENTION"
+            },
+        )
     except ValueError as e:
+        # LLM 응답 파싱/검증 실패 (시스템 문제)
         logger.warning(f"[Components] LLM 응답 처리 실패: {e}")
         raise HTTPException(status_code=502, detail=f"구성요소 추출 실패: {e}")
     except Exception:
