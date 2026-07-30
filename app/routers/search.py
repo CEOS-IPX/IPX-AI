@@ -105,6 +105,7 @@ class PatentResult(BaseModel):
     registration_date: Optional[str] = None
     legal_status: Optional[str] = None
     ipc_codes: list[str] = Field(default_factory=list)
+    relevance_score: Optional[int] = None
     summary: Optional[str] = None
     purpose: Optional[str] = None
     features: list[str] = Field(default_factory=list)
@@ -579,6 +580,7 @@ def _assemble_results(
             registration_date=src.registration_date if src else None,
             legal_status=src.legal_status if src else None,
             ipc_codes=src.ipc_codes if src else [],
+            relevance_score=summary.relevance_score if summary else None,
             summary=summary.summary if summary else None,
             purpose=summary.purpose if summary else None,
             features=summary.features if summary else [],
