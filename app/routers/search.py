@@ -105,6 +105,7 @@ class PatentResult(BaseModel):
     registration_date: Optional[str] = None
     legal_status: Optional[str] = None
     ipc_codes: list[str] = Field(default_factory=list)
+    relevance_score: Optional[int] = None
     summary: Optional[str] = None
     purpose: Optional[str] = None
     features: list[str] = Field(default_factory=list)
@@ -199,23 +200,23 @@ async def _execute_search(request: SearchRequest) -> SearchResponse:
     pipeline_start = time.perf_counter()
     logger.info(f"[Search Profiler] === 검색 파이프라인 시작: case_id={request.case_id} ===")
 
-    # ===== Step 0: required 특허 사전 확인 + 자동 적재 (3%) =====
+    # ===== Step 0: required 특허 사전 확인 + 자동 적재 =====
     if request.required_application_numbers:
         step_start = time.perf_counter()
 
         await progress_tracker.check_cancelled(request.case_id)
-        await progress_tracker.update(request.case_id, "필수 조회 특허 확인 중", 3)
+        await progress_tracker.update(request.case_id, "필수 조회 특허 확인 중", 0)
         await _ensure_required_exists(request.required_application_numbers)
 
         elapsed = time.perf_counter() - step_start
         logger.info(
             f"[Search Profiler] Step 0 (필수특허적재) 소요: {elapsed:.2f}s (누적: {time.perf_counter() - pipeline_start:.2f}s)")
 
-    # ===== Step 1: LLM 의도 해석 (5%) =====
+    # ===== Step 1: LLM 의도 해석 =====
     step_start = time.perf_counter()
 
     await progress_tracker.check_cancelled(request.case_id)
-    await progress_tracker.update(request.case_id, "검색 의도 분석 중", 5)
+    await progress_tracker.update(request.case_id, "검색 의도 분석 중", 11)
 
     try:
         intent = await interpret_intent(
@@ -245,11 +246,11 @@ async def _execute_search(request: SearchRequest) -> SearchResponse:
 
     logger.info(f"[의도 해석 완료] keywords={intent.keywords}, ipc={intent.ipc_codes}")
 
-    # ===== Step 2: 동의어 확장 (7%) =====
+    # ===== Step 2: 동의어 확장 =====
     step_start = time.perf_counter()
 
     await progress_tracker.check_cancelled(request.case_id)
-    await progress_tracker.update(request.case_id, "키워드 확장 중", 7)
+    await progress_tracker.update(request.case_id, "키워드 확장 중", 20)
     expanded_keywords = synonym_expander.expand(intent.keywords)
 
     elapsed = time.perf_counter() - step_start
@@ -262,7 +263,7 @@ async def _execute_search(request: SearchRequest) -> SearchResponse:
     step_start = time.perf_counter()
 
     await progress_tracker.check_cancelled(request.case_id)
-    await progress_tracker.update(request.case_id, "IPC 분류 코드 정리 중", 10)
+    await progress_tracker.update(request.case_id, "IPC 분류 코드 정리 중", 21)
     trusted_ipc = request.user_input_ipc or []
     estimated_ipc = [
         ipc for ipc in (intent.ipc_codes or [])
@@ -273,11 +274,11 @@ async def _execute_search(request: SearchRequest) -> SearchResponse:
     logger.info(
         f"[Search Profiler] Step 3 (IPC통합) 소요: {elapsed:.2f}s (누적: {time.perf_counter() - pipeline_start:.2f}s)")
 
-    # ===== Step 4: HyDE 가상 초록 (25%) =====
+    # ===== Step 4: HyDE 가상 초록 =====
     step_start = time.perf_counter()
 
     await progress_tracker.check_cancelled(request.case_id)
-    await progress_tracker.update(request.case_id, "유사 특허 모델 구성 중", 25)
+    await progress_tracker.update(request.case_id, "유사 특허 모델 구성 중", 22)
 
     try:
         hypothetical_abstract = await generate_hypothetical_abstract(
@@ -299,7 +300,7 @@ async def _execute_search(request: SearchRequest) -> SearchResponse:
     step_start = time.perf_counter()
 
     await progress_tracker.check_cancelled(request.case_id)
-    await progress_tracker.update(request.case_id, "의미 벡터 생성 중", 30)
+    await progress_tracker.update(request.case_id, "의미 벡터 생성 중", 39)
 
     try:
         query_vector = embedding_service.embed(hypothetical_abstract)
@@ -311,7 +312,7 @@ async def _execute_search(request: SearchRequest) -> SearchResponse:
     logger.info(
         f"[Search Profiler] Step 5 (임베딩생성) 소요: {elapsed:.2f}s (누적: {time.perf_counter() - pipeline_start:.2f}s)")
 
-    # ===== Step 6: 병렬 검색 (50%) =====
+    # ===== Step 6: 병렬 검색 =====
     step_start = time.perf_counter()
 
     await progress_tracker.check_cancelled(request.case_id)
@@ -343,11 +344,11 @@ async def _execute_search(request: SearchRequest) -> SearchResponse:
     logger.info(
         f"[Search Profiler] Step 6 (OpenSearch + pgvector 병렬검색) 소요: {elapsed:.2f}s (누적: {time.perf_counter() - pipeline_start:.2f}s)")
 
-    # ===== Step 7: RRF 병합 (55%) =====
+    # ===== Step 7: RRF 병합 =====
     step_start = time.perf_counter()
 
     await progress_tracker.check_cancelled(request.case_id)
-    await progress_tracker.update(request.case_id, "검색 결과 통합 순위 계산 중", 55)
+    await progress_tracker.update(request.case_id, "검색 결과 통합 순위 계산 중", 56)
 
     required = request.required_application_numbers
     buffer_top_n = request.result_count + len(required) + BUFFER_SIZE
@@ -362,11 +363,11 @@ async def _execute_search(request: SearchRequest) -> SearchResponse:
     logger.info(
         f"[Search Profiler] Step 7 (RRF 병합) 소요: {elapsed:.2f}s (누적: {time.perf_counter() - pipeline_start:.2f}s)")
 
-    # ===== Step 7.5: 정확한 개수 확보 (58%) =====
+    # ===== Step 7.5: 정확한 개수 확보 =====
     step_start = time.perf_counter()
 
     await progress_tracker.check_cancelled(request.case_id)
-    await progress_tracker.update(request.case_id, "결과 개수 정리 중", 58)
+    await progress_tracker.update(request.case_id, "결과 개수 정리 중", 57)
 
     if required:
         merged = _apply_required_with_exact_count(
@@ -402,11 +403,11 @@ async def _execute_search(request: SearchRequest) -> SearchResponse:
         await progress_tracker.mark_no_results(request.case_id)
         return empty_response
 
-    # ===== Step 8: 본문 데이터 준비 (60%) =====
+    # ===== Step 8: 본문 데이터 준비 =====
     step_start = time.perf_counter()
 
     await progress_tracker.check_cancelled(request.case_id)
-    await progress_tracker.update(request.case_id, "검색 결과 데이터 조회 중", 60)
+    await progress_tracker.update(request.case_id, "검색 결과 데이터 조회 중", 58)
 
     missing_sources = [
         m.application_number for m in merged
@@ -430,11 +431,11 @@ async def _execute_search(request: SearchRequest) -> SearchResponse:
     logger.info(
         f"[Search Profiler] Step 8 (본문 데이터 루프 조회) 소요: {elapsed:.2f}s (누적: {time.perf_counter() - pipeline_start:.2f}s)")
 
-    # ===== Step 9: 병렬 LLM 추출 (95%) =====
+    # ===== Step 9: 병렬 LLM 추출 =====
     step_start = time.perf_counter()
 
     await progress_tracker.check_cancelled(request.case_id)
-    await progress_tracker.update(request.case_id, "각 특허의 부가 정보 추출 중", 95)
+    await progress_tracker.update(request.case_id, "각 특허의 부가 정보 추출 중", 59)
 
     summaries: list[Optional[PatentSummary]] = await summarize_batch(
         patent_data=patent_data_for_summary,
@@ -447,7 +448,7 @@ async def _execute_search(request: SearchRequest) -> SearchResponse:
     logger.info(
         f"[Search Profiler] Step 9 (배치 요약 LLM) 소요: {elapsed:.2f}s (누적: {time.perf_counter() - pipeline_start:.2f}s)")
 
-    # ===== Step 10: 응답 조립 (100%) =====
+    # ===== Step 10: 응답 조립 =====
     step_start = time.perf_counter()
 
     await progress_tracker.check_cancelled(request.case_id)
@@ -579,6 +580,7 @@ def _assemble_results(
             registration_date=src.registration_date if src else None,
             legal_status=src.legal_status if src else None,
             ipc_codes=src.ipc_codes if src else [],
+            relevance_score=summary.relevance_score if summary else None,
             summary=summary.summary if summary else None,
             purpose=summary.purpose if summary else None,
             features=summary.features if summary else [],
