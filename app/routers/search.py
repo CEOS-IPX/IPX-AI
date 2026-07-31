@@ -666,6 +666,7 @@ async def add_manual_patents(request: AddManualRequest) -> AddManualResponse:
             registration_date=src.registration_date,
             legal_status=src.legal_status,
             ipc_codes=src.ipc_codes,
+            relevance_score=summary.relevance_score if summary else None,
             summary=summary.summary if summary else None,
             purpose=summary.purpose if summary else None,
             features=summary.features if summary else [],
