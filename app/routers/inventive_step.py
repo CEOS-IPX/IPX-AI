@@ -51,7 +51,10 @@ class SelectSecondaryRequest(BaseModel):
 
 
 class SelectSecondaryResponse(BaseModel):
-    d2_application_number: str
+    d2_application_number: Optional[str] = Field(
+        default=None,
+        description="선정된 D2 출원번호 (적합한 D2가 없으면 None)"
+    )
 
 # ============================================================
 # 1. 부인용 D2 자동 선정
@@ -90,15 +93,6 @@ async def select_secondary_endpoint(
     if result is None:
         raise HTTPException(status_code=502, detail="D2 선정에 실패했습니다.")
 
-    # LLM이 후보에 없는 출원번호를 반환한 경우 방어
-    candidate_nums = {c.application_number for c in request.candidates}
-    if result.d2_application_number not in candidate_nums:
-        logger.warning(
-            f"[InventiveStep] LLM이 후보에 없는 D2 반환: {result.d2_application_number}, "
-            f"후보={candidate_nums}. 첫 번째 후보로 대체."
-        )
-        result.d2_application_number = request.candidates[0].application_number
-
     return SelectSecondaryResponse(
         d2_application_number=result.d2_application_number,
     )
@@ -113,7 +107,7 @@ class SelectCategoriesRequest(BaseModel):
     invention_description: str
     components: list[InventionComponent]
     primary_art: PriorArtInfo
-    secondary_art: PriorArtInfo
+    secondary_art: Optional[PriorArtInfo] = None
     prior_art_reference: Optional[str] = None
     differentiation_notes: Optional[str] = None
     measurement_conditions: Optional[str] = None
